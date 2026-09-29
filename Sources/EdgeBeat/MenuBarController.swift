@@ -55,6 +55,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let preferences: AppPreferences
     private let nowPlayingItem = NSMenuItem(title: "Waiting for music...", action: nil, keyEquivalent: "")
     private let captureStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let energyCurrentItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let energySinceLaunchItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let performanceMonitor = PerformanceMonitor()
     private var lightingItem: NSMenuItem!
     private var primaryColorItem: NSMenuItem!
     private var secondaryColorItem: NSMenuItem!
@@ -122,6 +125,27 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let status = SMAppService.mainApp.status
         setLaunchAtLogin(status == .enabled || status == .requiresApproval)
         syncMenuState()
+
+        performanceMonitor.start { [weak self] current, sinceLaunch in
+            self?.setEnergyLines(current: current, sinceLaunch: sinceLaunch)
+        }
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        performanceMonitor.stop()
+    }
+
+    private func setEnergyLines(current: String, sinceLaunch: String) {
+        let currentFont = NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize,
+                                                            weight: .regular)
+        energyCurrentItem.attributedTitle = NSAttributedString(
+            string: current,
+            attributes: [.font: currentFont]
+        )
+        energySinceLaunchItem.attributedTitle = NSAttributedString(
+            string: sinceLaunch,
+            attributes: [.font: currentFont, .foregroundColor: NSColor.secondaryLabelColor]
+        )
     }
 
     private func makeMenu() -> NSMenu {
@@ -132,6 +156,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         captureStatusItem.isEnabled = false
         captureStatusItem.isHidden = true
         menu.addItem(captureStatusItem)
+        energyCurrentItem.isEnabled = false
+        energyCurrentItem.image = symbol("bolt.fill")
+        menu.addItem(energyCurrentItem)
+        energySinceLaunchItem.isEnabled = false
+        menu.addItem(energySinceLaunchItem)
         menu.addItem(.separator())
 
         lightingItem = commandItem("Lighting", action: #selector(toggleLighting(_:)), icon: "light.max")
