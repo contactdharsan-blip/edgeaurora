@@ -14,3 +14,4 @@ EdgeBeat.zip
 
 # Local editor/agent settings
 .claude/settings.local.json
+measurements.tsv

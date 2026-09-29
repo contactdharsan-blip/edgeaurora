@@ -1,15 +1,6 @@
 import Accelerate
 import Foundation
 
-struct AudioFeatures {
-    var level: Double
-    var bass: Double
-    var mid: Double
-    var treble: Double
-    var beat: Bool
-    var waveform: [Double]
-}
-
 final class BeatAnalyzer {
     var onFeatures: ((AudioFeatures, UInt64) -> Void)?
 
