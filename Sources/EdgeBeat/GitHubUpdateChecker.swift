@@ -52,10 +52,10 @@ final class GitHubUpdateChecker {
     }
 
     private let endpoint = URL(
-        string: "https://api.github.com/repos/ChaitanyaSai-Meka/EdgeBeat/releases/latest"
+        string: "https://api.github.com/repos/contactdharsan-blip/edgeaurora/releases/latest"
     )!
     private let releasesPage = URL(
-        string: "https://github.com/ChaitanyaSai-Meka/EdgeBeat/releases"
+        string: "https://github.com/contactdharsan-blip/edgeaurora/releases"
     )!
     private var task: URLSessionDataTask?
 
@@ -142,6 +142,6 @@ final class GitHubUpdateChecker {
     private func isEdgeBeatReleaseURL(_ url: URL) -> Bool {
         url.scheme == "https"
             && url.host == "github.com"
-            && url.path.hasPrefix("/ChaitanyaSai-Meka/EdgeBeat/releases/")
+            && url.path.hasPrefix("/contactdharsan-blip/edgeaurora/releases/")
     }
 }

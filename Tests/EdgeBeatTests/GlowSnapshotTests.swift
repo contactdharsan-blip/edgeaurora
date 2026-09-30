@@ -45,7 +45,10 @@ final class GlowSnapshotTests: XCTestCase {
 
     /// Renders the four strips and composites them into one RGBA image (premultiplied).
     private func render(_ harness: Harness) throws -> [UInt8] {
-        let renderer = try XCTUnwrap(GlowRenderer.shared)
+        // CI runners may have no GPU; these tests need one.
+        guard let renderer = GlowRenderer.shared else {
+            throw XCTSkip("No Metal device: snapshot tests need a GPU.")
+        }
         let width = Int(size.width), height = Int(size.height)
         var image = [UInt8](repeating: 0, count: width * height * 4)
         let depth = GlowAnimator.stripDepth(thickness: harness.preferences.thickness)
