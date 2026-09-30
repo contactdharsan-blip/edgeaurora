@@ -57,7 +57,7 @@ final class GlowAnimator {
     /// base reach; the shader caps the reach so its falloff reaches exactly
     /// zero inside the strip, and the strip's inner boundary never shows.
     static func stripDepth(thickness: Double) -> CGFloat {
-        ceil(baseReach(thickness: thickness) * 2.4)
+        ceil(baseReach(thickness: thickness) * 2.8)
     }
 
     static func cornerRadius(for size: CGSize) -> CGFloat {

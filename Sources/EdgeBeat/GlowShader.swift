@@ -270,7 +270,7 @@ enum GlowShader {
                     + 0.30 * loop_noise(c * n2 + drift * 1.5, n2)
                     + 0.15 * loop_noise(c * n3 - drift * 2.6, n3);
         float reach = base * (0.2 + 0.8 * band) * (1.0 + 0.55 * kick) + base * 0.7 * shock;
-        float end_line = clamp(reach * (0.55 + 0.65 * swell), 3.0, strip_depth * 0.8);
+        float end_line = clamp(reach * (0.55 + 0.65 * swell), 3.0, strip_depth * 0.68);
         float start_line = 1.0 + 3.5 * loop_noise(c * n2 - drift * 0.6, n2);
         end_line = max(end_line, start_line + 2.0);
 
@@ -280,22 +280,36 @@ enum GlowShader {
                      * smoothstep(end_line + aa, end_line - aa, d);
         float depth = clamp((d - start_line) / (end_line - start_line), 0.0, 1.0);
 
-        // Curtain rays: streaks across the ribbon that drift along it.
+        // Curtain rays: streaks across the ribbon that drift along it. The
+        // strongest shoot past the end line and fade out, the way aurora rays
+        // spill over the curtain's lower edge.
         float n4 = cells(perimeter_points, 10.0);
         float n5 = cells(perimeter_points, 4.5);
-        float rays = (0.35 + 0.65 * loop_noise(c * n4 + drift * 2.0, n4))
-                   * (0.7 + 0.3 * loop_noise(c * n5 - drift * 3.4, n5));
+        float ray_field = loop_noise(c * n4 + drift * 2.0, n4);
+        float hair = 0.65 + 0.35 * loop_noise(c * n5 - drift * 3.4, n5);
+        float rays = (0.72 + 0.28 * ray_field) * hair;
+        float ray = smoothstep(0.5, 0.95, ray_field) * hair;
 
         float end_offset = (d - end_line) / 1.4;
         float start_offset = (d - start_line) / 1.0;
         float end_glow = exp(-end_offset * end_offset);
         float start_glow = exp(-start_offset * start_offset);
-        float spill = d > end_line ? 0.22 * exp(-(d - end_line) / 4.0) : 0.0;
-        float fill = inside * (0.34 + 0.46 * pow(depth, 1.5)) * rays;
+        float past = d - end_line;
+        float ray_length = min((10.0 + 42.0 * ray) * (0.6 + 0.6 * band) * (1.0 + 0.7 * kick),
+                               max(strip_depth - end_line - 4.0, 0.0));
+        float streak = past > 0.0 && ray_length > 0.0
+            ? ray * pow(clamp(1.0 - past / ray_length, 0.0, 1.0), 1.6)
+            : 0.0;
+        float spill = past > 0.0 ? 0.18 * exp(-past / 4.0) : 0.0;
+        float fill = inside * (0.8 + 0.2 * depth) * rays;
 
-        float energy = (0.5 + 0.5 * band) * (1.0 + 0.5 * kick + 0.35 * snare + 0.3 * u.flow.z)
+        float energy = (0.55 + 0.45 * band) * (1.0 + 0.5 * kick + 0.35 * snare + 0.3 * u.flow.z)
                      * (0.85 + 0.15 * level);
-        float brightness = (fill + 0.95 * end_glow + 0.6 * start_glow + spill) * energy
+        // The body keeps most of its colour in quiet passages; the lines and
+        // rays carry the swings.
+        float body_energy = (0.8 + 0.2 * band) * (1.0 + 0.25 * kick + 0.2 * u.flow.z);
+        float brightness = fill * body_energy
+                         + (0.9 * end_glow + 0.6 * start_glow + 0.8 * streak + spill) * energy
                          + 0.4 * shock * end_glow;
 
         float mask = 1.0;
@@ -314,8 +328,9 @@ enum GlowShader {
         float hue = s * 0.85 + u.color.x;
         float3 color = mix(vivid(palette(u, hue)), vivid(palette(u, hue + 0.3)),
                            smoothstep(0.0, 1.0, depth));
-        // The ribbon's body sits deeper than its lines, which carry the light.
-        color *= mix(0.7, 1.0, max(end_glow, start_glow));
+        // The ribbon's body sits a little deeper than its lines; rays past the
+        // end line keep the end line's colour.
+        color *= mix(0.9, 1.0, max(max(end_glow, start_glow), streak));
         color = mix(color, float3(1.0),
                     clamp(end_glow * (0.05 + 0.25 * kick + 0.15 * u.flow.z), 0.0, 1.0));
 
