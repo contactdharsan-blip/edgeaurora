@@ -310,7 +310,7 @@ enum GlowShader {
         float streak = past > 0.0 && ray_length > 0.0
             ? ray * pow(clamp(1.0 - past / ray_length, 0.0, 1.0), 1.6)
             : 0.0;
-        float fill = inside * (0.93 + 0.07 * depth) * rays;
+        float fill = inside * (0.5 + 0.08 * depth) * rays;
 
         // Neon halos: every crisp line and ray carries a soft glow around its
         // sharp core, wider than the core and fainter.
@@ -324,7 +324,7 @@ enum GlowShader {
             : 0.0;
         // Bloom: the whole ribbon breathes light a little way past its end line.
         float bloom = past > 0.0 ? exp(-past / 16.0) : 0.0;
-        float halos = 0.9 * end_halo + 0.85 * start_halo + 0.8 * ray_halo + 0.3 * bloom;
+        float halos = 0.35 * end_halo + 0.7 * start_halo + 0.65 * ray_halo + 0.2 * bloom;
 
         float energy = (0.7 + 0.3 * band) * (1.0 + 0.2 * kick + 0.1 * snare + 0.15 * u.flow.z)
                      * (0.9 + 0.1 * level);
@@ -332,7 +332,7 @@ enum GlowShader {
         // their halos carry the (deliberately gentle) swings.
         float body_energy = (0.85 + 0.15 * band) * (1.0 + 0.1 * kick + 0.1 * u.flow.z);
         float brightness = fill * body_energy
-                         + (0.9 * end_glow + 0.6 * start_glow + 0.8 * streak + halos) * energy
+                         + (0.3 * end_glow + 0.6 * start_glow + 0.8 * streak + halos) * energy
                          + 0.15 * shock * end_glow;
 
         float mask = 1.0;
@@ -356,7 +356,9 @@ enum GlowShader {
         // end line keep the end line's colour.
         // Neon: white-hot cores on every line and ray inside their coloured
         // glow, and the whole ribbon lifted toward white.
-        float core = max(max(end_glow, start_glow * 0.85), streak * 0.8);
+        // The inner (end) line stays a gentle edge; the outer line and rays
+        // carry the white-hot cores.
+        float core = max(max(end_glow * 0.3, start_glow * 0.85), streak * 0.8);
         color = mix(color, float3(1.0),
                     clamp(0.14 + core * (0.55 + 0.1 * kick + 0.08 * u.flow.z), 0.0, 1.0));
 
@@ -373,7 +375,8 @@ enum GlowShader {
                       * treble * start_glow;
 
         float gain = u.shape.z * presence;
-        float alpha = clamp(brightness * mask * gain, 0.0, 1.0);
+        // Never fully opaque: the screen always shows through the aurora.
+        float alpha = clamp(brightness * mask * gain, 0.0, 1.0) * 0.82;
         float glints = clamp(0.8 * sparkle * gain, 0.0, 1.0);
         float3 glint_color = mix(color, float3(1.0), 0.4);
         float3 rgb = color * alpha * (1.0 - glints) + glint_color * glints;
