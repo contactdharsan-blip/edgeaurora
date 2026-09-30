@@ -33,7 +33,7 @@ final class GlowSnapshotTests: XCTestCase {
             let frames = Int(seconds * 60)
             for _ in 0..<max(1, frames) {
                 time += 1.0 / 60.0
-                features.timestamp = ProcessInfo.processInfo.systemUptime
+                features.timestamp = time
                 animator.advance(to: time)
             }
         }

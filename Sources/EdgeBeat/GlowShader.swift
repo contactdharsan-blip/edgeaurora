@@ -267,18 +267,26 @@ enum GlowShader {
         color = clamp(mix(float3(luma), color, 1.3), 0.0, 1.0);
         color = mix(color, float3(1.0), clamp(core * (0.12 * band + 0.35 * kick + 0.25 * u.flow.z), 0.0, 1.0));
 
-        // Treble sparkle: short-lived glints along the rim where the highs are.
+        // Treble shimmer: soft, tinted glints that swell and fade along the rim
+        // where the highs are, each cell on its own random phase so they never
+        // flicker in step.
         float perimeter_points = 2.0 * (u.screen.x + u.screen.y);
-        float cell = floor(c * perimeter_points / 6.0);
-        float tick = floor(time * 12.0);
-        float glint = step(1.0 - 0.1 * treble * band, hash(cell * 1.37 + tick * 7.13));
-        float sparkle = glint * treble * exp(-edge / 3.0);
+        float along = c * perimeter_points / 22.0;
+        float cell = floor(along);
+        float cycle = time * 3.0 + hash(cell * 1.37) * 10.0;
+        float life = fract(cycle);
+        float chance = hash(cell * 3.11 + floor(cycle) * 7.13);
+        float lit = step(1.0 - 0.45 * treble * band, chance);
+        float offset = (fract(along) - 0.5) * 3.2;
+        float sparkle = lit * sin(life * 3.14159) * exp(-offset * offset)
+                      * treble * exp(-edge / 5.0);
 
         float gain = u.shape.z * presence;
         float alpha = clamp(brightness * mask * gain, 0.0, 1.0);
-        float glints = sparkle * gain;
-        float3 rgb = color * alpha + float3(glints);
-        alpha = clamp(alpha + glints, 0.0, 1.0);
+        float glints = clamp(0.8 * sparkle * gain, 0.0, 1.0);
+        float3 glint_color = mix(color, float3(1.0), 0.55);
+        float3 rgb = color * alpha * (1.0 - glints) + glint_color * glints;
+        alpha = alpha + glints * (1.0 - alpha);
         return float4(min(rgb, float3(alpha)), alpha);
     }
     """

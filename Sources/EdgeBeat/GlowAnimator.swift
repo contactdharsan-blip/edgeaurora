@@ -30,6 +30,8 @@ final class GlowAnimator {
     private var lastKickSerial: UInt64?
     private var lastSnareSerial: UInt64?
     private var lastDropSerial: UInt64?
+    private var lastFeatureTimestamp: TimeInterval?
+    private var lastFeatureArrival: TimeInterval = 0
     private var frame = GlowUniforms()
 
     init(preferences: AppPreferences, renderState: RenderState,
@@ -170,8 +172,7 @@ final class GlowAnimator {
         let colors: [NSColor]
         switch preferences.colorSource {
         case .album:
-            let palette = renderState.palette
-            colors = [palette.primary, palette.secondary, palette.accent]
+            colors = renderState.palette.colors
         case .custom:
             colors = preferences.colorMode == .gradient
                 ? [preferences.primaryColor, preferences.secondaryColor]
@@ -186,11 +187,21 @@ final class GlowAnimator {
                      Float(rgb.blueComponent), 1)
     }
 
-    /// Features older than half a second belong to audio that has stopped.
+    /// A reading that has not changed for half a second belongs to audio that
+    /// has stopped. Staleness is judged by when a new reading last arrived, not
+    /// by the reading's own timestamp: that is counted in samples, and dropped
+    /// buffers or clock drift over a long session would slowly age it out.
     private func freshFeatures() -> AudioFeatures? {
-        guard let features = featureSource() else { return nil }
-        let age = ProcessInfo.processInfo.systemUptime - features.timestamp
-        return features.timestamp == 0 || age < 0.5 ? features : nil
+        guard let features = featureSource() else {
+            lastFeatureTimestamp = nil
+            return nil
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        if features.timestamp != lastFeatureTimestamp {
+            lastFeatureTimestamp = features.timestamp
+            lastFeatureArrival = now
+        }
+        return now - lastFeatureArrival < 0.5 ? features : nil
     }
 
     /// Serials restart at zero with each audio session, so a smaller value is a

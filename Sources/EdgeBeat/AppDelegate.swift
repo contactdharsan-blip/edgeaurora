@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var glowAnimator = GlowAnimator(
         preferences: preferences,
         renderState: renderState,
-        featureSource: { [weak self] in self?.latestAudioFeatures }
+        featureSource: { [weak self] in self?.beatAnalyzer?.latestFeatures() }
     )
     private lazy var overlay = OverlayController(
         preferences: preferences,
@@ -44,7 +44,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     private var menuBar: MenuBarController?
     private var currentTrack = NowPlayingTrack.empty
-    private var latestAudioFeatures: AudioFeatures?
     private var isAudioCaptureRequested = false
     private var requestedAudioProcessID: pid_t?
     private var audioCaptureRetryWork: DispatchWorkItem?
@@ -203,7 +202,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self,
                   audioSessionGeneration.matches(session),
                   preferences.enabled || isCompanionVisible else { return }
-            latestAudioFeatures = features
             if isCompanionVisible { renderState.update(audio: features) }
         }
         audioTap.onSamples = { [weak self] samples, sampleRate, session in
