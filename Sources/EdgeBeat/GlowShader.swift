@@ -320,7 +320,9 @@ enum GlowShader {
 
         // Neon halos: every crisp line and ray carries a soft glow around its
         // sharp core, wider than the core and fainter.
-        float end_halo_offset = (d - end_line) / 18.0;
+        // Halo and bloom widths shrink with the strip, so a low Thickness
+        // setting never cuts them off at the strip's inner edge.
+        float end_halo_offset = (d - end_line) / min(18.0, strip_depth * 0.2);
         float start_halo_offset = (d - start_line) / 16.0;
         float end_halo = exp(-end_halo_offset * end_halo_offset);
         float start_halo = exp(-start_halo_offset * start_halo_offset);
@@ -329,7 +331,7 @@ enum GlowShader {
             ? ray_soft * pow(clamp(1.0 - past / ray_halo_length, 0.0, 1.0), 2.0)
             : 0.0;
         // Bloom: the whole ribbon breathes light a little way past its end line.
-        float bloom = past > 0.0 ? exp(-past / 16.0) : 0.0;
+        float bloom = past > 0.0 ? exp(-past / min(16.0, strip_depth * 0.18)) : 0.0;
         // Rays and their halos past the inner edge continue the fade across
         // the band instead of starting brighter than the fill beside them.
         float halos = 0.35 * end_halo + 0.7 * start_halo + 0.3 * ray_halo + 0.2 * bloom;
@@ -382,7 +384,10 @@ enum GlowShader {
         float sparkle = lit * sin(life * 3.14159) * exp(-offset * offset)
                       * treble * start_glow;
 
-        float gain = u.shape.z * presence;
+        // Safety net: everything reaches zero before the strip ends, whatever
+        // the settings. At normal thickness the light is already gone by here.
+        float strip_fade = 1.0 - smoothstep(strip_depth * 0.72, strip_depth, edge);
+        float gain = u.shape.z * presence * strip_fade;
         // Never fully opaque: the screen always shows through the aurora.
         float alpha = clamp(brightness * mask * gain, 0.0, 1.0) * 0.82;
         float glints = clamp(0.8 * sparkle * gain, 0.0, 1.0);

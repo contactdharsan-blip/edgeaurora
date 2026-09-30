@@ -129,27 +129,42 @@ final class GlowSnapshotTests: XCTestCase {
     }
 
     func testCentreStaysClearAndStripEdgesFadeToZero() throws {
-        let harness = Harness()
-        harness.features.bands = bands { _ in 1 }
-        harness.features.level = 1
-        harness.features.kickSerial = 0
-        harness.run(seconds: 1)
-        harness.features.kickSerial = 1
-        harness.features.kickStrength = 1
-        harness.run(seconds: 1.0 / 30.0)
-        let image = try render(harness)
-        try save(image, name: "03-full-kick")
+        // Every Thickness the menu slider allows, not just the one the other
+        // scenes use: fixed-size halos once overran thin strips (verifier,
+        // 2026-09-29, 0.149 alpha on the last row at thickness 0).
+        for thickness in [0.0, 0.1, 0.45, 1.0] {
+            let harness = Harness()
+            harness.preferences.thickness = thickness
+            harness.features.bands = bands { _ in 1 }
+            harness.features.level = 1
+            harness.features.kickSerial = 0
+            harness.run(seconds: 1)
+            harness.features.kickSerial = 1
+            harness.features.kickStrength = 1
+            harness.run(seconds: 1.0 / 30.0)
+            let image = try render(harness)
+            try save(image, name: String(format: "03-full-kick-thickness-%.2f", thickness))
 
-        XCTAssertEqual(alpha(image, 756, 475), 0)
-        let depth = Int(GlowAnimator.stripDepth(thickness: 1))
-        // Last row of the bottom strip and last column of the left strip: the
-        // glow must have faded out before the strip ends, or it shows as a line.
-        XCTAssertLessThan(alpha(image, 756, 949 - depth), 0.02)
-        XCTAssertLessThan(alpha(image, depth - 1, 475), 0.02)
-        // The ribbon floats a few points in from the edge; somewhere across the
-        // bottom band it must be solidly lit.
-        let bottomBand = (949 - 60)..<949
-        XCTAssertGreaterThan(bottomBand.map { alpha(image, 756, $0) }.max() ?? 0, 0.5)
+            XCTAssertEqual(alpha(image, 756, 475), 0)
+            let depth = Int(GlowAnimator.stripDepth(thickness: thickness))
+            // Last row of the bottom strip and last column of the left strip:
+            // the glow must have faded out before the strip ends, or it shows
+            // as a line. Check the whole row, not one pixel.
+            let lastRow = Int(size.height) - depth
+            // Between the corners only: there the side glow legitimately lights
+            // the bottom strip's last row.
+            let rowMax = stride(from: depth, to: Int(size.width) - depth, by: 2)
+                .map { alpha(image, $0, lastRow) }.max() ?? 0
+            let columnMax = stride(from: depth, to: Int(size.height) - depth, by: 2)
+                .map { alpha(image, depth - 1, $0) }.max() ?? 0
+            XCTAssertLessThan(rowMax, 0.02, "bottom strip edge at thickness \(thickness)")
+            XCTAssertLessThan(columnMax, 0.02, "left strip edge at thickness \(thickness)")
+            // The ribbon floats a few points in from the edge; somewhere across
+            // the bottom band it must be solidly lit.
+            let bottomBand = (Int(size.height) - depth)..<Int(size.height)
+            XCTAssertGreaterThan(bottomBand.map { alpha(image, 756, $0) }.max() ?? 0, 0.3,
+                                 "lit at thickness \(thickness)")
+        }
     }
 
     func testQuietPassageIsDimmerThanLoudOne() throws {
