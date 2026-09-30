@@ -172,6 +172,33 @@ final class GlowSnapshotTests: XCTestCase {
         XCTAssertGreaterThan(Double(litArea(loudImage)), 1.2 * Double(litArea(quietImage)))
     }
 
+    func testRaysReachFurtherWhenTheMusicIsLoud() throws {
+        func rayReach(bandValue: Float, level: Double, name: String) throws -> Double {
+            let harness = Harness()
+            harness.features.bands = bands { _ in bandValue }
+            harness.features.level = level
+            harness.run(seconds: 2)
+            let image = try render(harness)
+            try save(image, name: name)
+            // Mean depth, over the bottom edge, of the deepest faintly lit pixel.
+            let height = Int(size.height)
+            var total = 0
+            var columns = 0
+            for x in stride(from: 200, to: Int(size.width) - 200, by: 3) {
+                columns += 1
+                for depth in stride(from: 200, through: 0, by: -1)
+                    where alpha(image, x, height - 1 - depth) > 0.03 {
+                    total += depth
+                    break
+                }
+            }
+            return Double(total) / Double(columns)
+        }
+        let quiet = try rayReach(bandValue: 0.15, level: 0.15, name: "07-rays-quiet")
+        let loud = try rayReach(bandValue: 0.9, level: 0.9, name: "08-rays-loud")
+        XCTAssertGreaterThan(loud, quiet * 1.6, "loud \(loud) vs quiet \(quiet)")
+    }
+
     func testShockwaveClimbsTheSides() throws {
         let harness = Harness()
         harness.features.bands = bands { _ in 0.35 }

@@ -306,7 +306,11 @@ enum GlowShader {
         float start_glow = exp(-start_offset * start_offset);
         float past = d - end_line;
         float room = max(strip_depth - end_line - 4.0, 0.0);
-        float ray_length = min((10.0 + 42.0 * ray) * (0.75 + 0.35 * band) * (1.0 + 0.25 * kick), room);
+        // Ray length is where the music shows: each ray reaches as far as the
+        // band under it is loud (bass rays along the bottom, treble across the
+        // top), shrinking to stubs in silence and thrown long by kicks.
+        float drive = pow(band, 0.8) * (0.45 + 0.75 * level);
+        float ray_length = min((4.0 + 80.0 * ray) * (0.08 + 1.1 * drive) * (1.0 + 0.4 * kick), room);
         float streak = past > 0.0 && ray_length > 0.0
             ? ray * pow(clamp(1.0 - past / ray_length, 0.0, 1.0), 1.6)
             : 0.0;
@@ -320,7 +324,7 @@ enum GlowShader {
         float start_halo_offset = (d - start_line) / 16.0;
         float end_halo = exp(-end_halo_offset * end_halo_offset);
         float start_halo = exp(-start_halo_offset * start_halo_offset);
-        float ray_halo_length = min(ray_length * 1.6 + 12.0, room);
+        float ray_halo_length = min(ray_length * 1.5 + 4.0 + 8.0 * drive, room);
         float ray_halo = past > 0.0 && ray_halo_length > 0.0
             ? ray_soft * pow(clamp(1.0 - past / ray_halo_length, 0.0, 1.0), 2.0)
             : 0.0;
