@@ -328,9 +328,11 @@ final class BeatAnalyzer {
         hopSeconds = Double(hopSize) / sampleRate
         shortLoudnessCoefficient = Float(exp(-hopSeconds / 0.3))
         longLoudnessCoefficient = Float(exp(-hopSeconds / 6.0))
-        kickRefractoryHops = Int((Self.kickRefractorySeconds / hopSeconds).rounded())
-        snareRefractoryHops = Int((Self.snareRefractorySeconds / hopSeconds).rounded())
-        dropSpacingHops = Int((Self.dropSpacingSeconds / hopSeconds).rounded())
+        // The smallest whole number of hops that is at least the refractory,
+        // so the gap between two onsets is never shorter than specified.
+        kickRefractoryHops = Int((Self.kickRefractorySeconds / hopSeconds).rounded(.up))
+        snareRefractoryHops = Int((Self.snareRefractorySeconds / hopSeconds).rounded(.up))
+        dropSpacingHops = Int((Self.dropSpacingSeconds / hopSeconds).rounded(.up))
         publishIntervalSamples = max(1, Int((sampleRate / Self.publishHz).rounded()) - 1)
         fluxHistoryCapacity = max(8, Int((1.0 / hopSeconds).rounded()))
         intensityHistoryCapacity = max(8, Int((Self.dropLookbackSeconds / hopSeconds).rounded()))
@@ -579,7 +581,7 @@ final class BeatAnalyzer {
 
         guard warmedUp,
               history.count >= max(8, fluxHistoryCapacity / 3),
-              hopIndex - lastHop > refractoryHops,
+              hopIndex - lastHop >= refractoryHops,
               mean(of: bandValue, in: bands) > Self.onsetBandFloor,
               flux > threshold else { return (false, 0) }
         lastHop = hopIndex
@@ -637,11 +639,14 @@ final class BeatAnalyzer {
         }
 
         if waveform.count > 2 {
-            var spatiallySmoothed = waveform
+            // Smoothed in place, carrying the value each step overwrote, so the
+            // hop allocates nothing but the array it returns.
+            var previous = waveform[0]
             for index in 1..<(waveform.count - 1) {
-                spatiallySmoothed[index] = (waveform[index - 1] + waveform[index] * 2 + waveform[index + 1]) / 4
+                let current = waveform[index]
+                waveform[index] = (previous + current * 2 + waveform[index + 1]) / 4
+                previous = current
             }
-            waveform = spatiallySmoothed
         }
 
         for index in waveform.indices {
