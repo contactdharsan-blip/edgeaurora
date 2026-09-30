@@ -238,8 +238,18 @@ enum GlowShader {
         return select(high, low, p3 <= 0.0031308);
     }
 
-    static float hash(float n) {
-        return fract(sin(n * 12.9898) * 43758.5453);
+    // Integer hash of two integer-valued inputs (a cell index and a salt or
+    // cycle count), in [0, 1). Exact on every GPU and at any input size, unlike
+    // the usual fract(sin(x) * 43758) trick, whose result differs between GPUs
+    // and loses precision as a session's clock grows.
+    static float hash2(float a, float b) {
+        uint x = uint(int(a)) * 0x9E3779B1u ^ (uint(int(b)) + 0x7F4A7C15u) * 0x85EBCA77u;
+        x ^= x >> 16;
+        x *= 0x7FEB352Du;
+        x ^= x >> 15;
+        x *= 0x846CA68Bu;
+        x ^= x >> 16;
+        return float(x >> 8) * (1.0 / 16777216.0);
     }
 
     // Distance used for the soft halo: a smooth minimum of the four edge
@@ -271,8 +281,8 @@ enum GlowShader {
     static float loop_noise(float x, float period) {
         float i = floor(x);
         float f = x - i;
-        float a = hash(wrap_cell(i, period));
-        float b = hash(wrap_cell(i + 1.0, period));
+        float a = hash2(wrap_cell(i, period), 1.0);
+        float b = hash2(wrap_cell(i + 1.0, period), 1.0);
         return mix(a, b, f * f * (3.0 - 2.0 * f));
     }
 
@@ -281,13 +291,13 @@ enum GlowShader {
     // third, flickering, then fading; about a fifth of its cycles are skipped
     // so the rim never pulses in step. Returns (visibility, rise).
     static float2 ray_life(float cell, float time) {
-        float period = 0.9 + 1.6 * hash(cell * 5.17);
-        float clock = time / period + hash(cell * 9.31);
+        float period = 0.9 + 1.6 * hash2(cell, 2.0);
+        float clock = time / period + hash2(cell, 3.0);
         float t = fract(clock);
-        float alive = step(0.2, hash(cell * 3.7 + floor(clock) * 1.31));
+        float alive = step(0.2, hash2(cell, 1000.0 + floor(clock)));
         float birth = smoothstep(0.0, 0.1, t);
         float death = 1.0 - smoothstep(0.62, 1.0, t);
-        float flicker = 0.88 + 0.12 * sin(time * (18.0 + 14.0 * hash(cell * 2.3)) + cell);
+        float flicker = 0.88 + 0.12 * sin(time * (18.0 + 14.0 * hash2(cell, 4.0)) + cell);
         return float2(alive * birth * death * flicker, smoothstep(0.0, 0.3, t));
     }
 
@@ -375,7 +385,7 @@ enum GlowShader {
         float2 ray_state = mix(ray_life(cell_a, time), ray_life(cell_b, time), blend_x);
         // Onsets spark rays where their frequencies live: kicks along the
         // bottom, snares and hats across the top, scaled by Reactivity.
-        float chosen = mix(step(0.5, hash(cell_a * 7.13)), step(0.5, hash(cell_b * 7.13)), blend_x);
+        float chosen = mix(step(0.5, hash2(cell_a, 5.0)), step(0.5, hash2(cell_b, 5.0)), blend_x);
         float spark = clamp((kick * (1.0 - s) + snare * s) * react, 0.0, 1.0) * chosen;
 
         float rays = (0.72 + 0.28 * ray_field * (0.6 + 0.4 * ray_state.x)) * hair;
@@ -476,9 +486,9 @@ enum GlowShader {
         // are, each cell on its own random phase so they never flicker in step.
         float along = c * perimeter_points / 22.0;
         float cell = floor(along);
-        float cycle = time * 3.0 + hash(cell * 1.37) * 10.0;
+        float cycle = time * 3.0 + hash2(cell, 6.0) * 10.0;
         float life = fract(cycle);
-        float chance = hash(cell * 3.11 + floor(cycle) * 7.13);
+        float chance = hash2(cell, 2000.0 + floor(cycle));
         float lit = step(1.0 - 0.45 * treble * band, chance);
         float offset = (fract(along) - 0.5) * 3.2;
         float sparkle = lit * sin(life * 3.14159) * exp(-offset * offset)
