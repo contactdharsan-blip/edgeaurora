@@ -43,7 +43,7 @@ One Apple M3 Pro MacBook Pro on macOS 27, glow at full thickness; your numbers
 will differ. `scripts/measure.sh` records the same figures on your machine. The
 menu also shows live CPU, watts and frame rate while it is open.
 
-**Fixes carried over to upstream as a pull request**
+**Fixes offered upstream** ([EdgeBeat#3](https://github.com/ChaitanyaSai-Meka/EdgeBeat/pull/3))
 - With Spotify not installed, every poll compiled `tell application "Spotify"`,
   which opens a hidden "Where is Spotify?" chooser and hangs track detection.
 - The Now Playing window kept its SwiftUI view ticking while hidden.
