@@ -12,8 +12,6 @@ final class RenderState: ObservableObject {
     private(set) var mid: Double = 0
     private(set) var treble: Double = 0
     private(set) var beatEnvelope: Double = 0
-    @Published private(set) var waveFlowPhase: Double = 0
-    private(set) var waveFlowBeatEnvelope: Double = 0
     @Published private(set) var isPlaying = false
     @Published private(set) var trackTitle = ""
     @Published private(set) var trackArtist = ""
@@ -31,11 +29,6 @@ final class RenderState: ObservableObject {
     private var hasAudioTarget = false
     private var paletteTrackIdentifier = ""
     private var paletteArtworkRevision = ""
-    private var waveFlowTimer: Timer?
-    private var waveFlowLastFrameTime = 0.0
-    private var isWaveFlowAnimationActive = false
-    private var waveFlowSpeed = 0.5
-    private var waveFlowDirection = WaveFlowDirection.clockwise
 
     func update(track: NowPlayingTrack) {
         if !track.identifier.isEmpty,
@@ -118,84 +111,7 @@ final class RenderState: ObservableObject {
             if audioSmoothingTimer != nil {
                 restartAudioSmoothingTimer()
             }
-            if isWaveFlowAnimationActive && waveFlowSpeed > 0 {
-                restartWaveFlowTimer()
-            }
         }
-    }
-
-    func setWaveFlowAnimationActive(_ active: Bool) {
-        guard isWaveFlowAnimationActive != active else { return }
-        isWaveFlowAnimationActive = active
-        if active && waveFlowSpeed > 0 {
-            restartWaveFlowTimer()
-        } else {
-            stopWaveFlowTimer()
-        }
-    }
-
-    func setWaveFlowSpeed(_ speed: Double) {
-        let clampedSpeed = min(1, max(0, speed))
-        guard waveFlowSpeed != clampedSpeed else { return }
-        let wasStopped = waveFlowSpeed == 0
-        waveFlowSpeed = clampedSpeed
-
-        guard isWaveFlowAnimationActive else { return }
-        if clampedSpeed == 0 {
-            stopWaveFlowTimer()
-        } else if wasStopped || waveFlowTimer == nil {
-            restartWaveFlowTimer()
-        }
-    }
-
-    func setWaveFlowDirection(_ direction: WaveFlowDirection) {
-        waveFlowDirection = direction
-    }
-
-    private func restartWaveFlowTimer() {
-        guard waveFlowSpeed > 0 else {
-            stopWaveFlowTimer()
-            return
-        }
-        waveFlowTimer?.invalidate()
-        waveFlowLastFrameTime = ProcessInfo.processInfo.systemUptime
-        let interval = 1.0 / (isLowPowerModeEnabled ? 30.0 : 60.0)
-        waveFlowTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            self?.advanceWaveFlow()
-        }
-        waveFlowTimer?.tolerance = interval * 0.05
-        if let timer = waveFlowTimer {
-            RunLoop.current.add(timer, forMode: .common)
-        }
-    }
-
-    private func stopWaveFlowTimer() {
-        waveFlowTimer?.invalidate()
-        waveFlowTimer = nil
-        waveFlowLastFrameTime = 0
-        waveFlowBeatEnvelope = 0
-    }
-
-    private func advanceWaveFlow() {
-        guard isWaveFlowAnimationActive, waveFlowSpeed > 0 else {
-            stopWaveFlowTimer()
-            return
-        }
-        let now = ProcessInfo.processInfo.systemUptime
-        let elapsed = min(0.1, max(0, now - waveFlowLastFrameTime))
-        waveFlowLastFrameTime = now
-        if beat {
-            waveFlowBeatEnvelope += (1 - waveFlowBeatEnvelope) * 0.55
-        } else {
-            waveFlowBeatEnvelope *= max(0, 1 - elapsed * 4.5)
-        }
-        let baseSpeed = 0.14 * pow(waveFlowSpeed, 1.25)
-        let musicMultiplier = 1 + level * 0.5 + bass * 0.4
-            + waveFlowBeatEnvelope * 0.35
-        let nextPhase = waveFlowPhase
-            + elapsed * baseSpeed * musicMultiplier * waveFlowDirection.phaseSign
-        let remainder = nextPhase.truncatingRemainder(dividingBy: 1)
-        waveFlowPhase = remainder >= 0 ? remainder : remainder + 1
     }
 
     func update(audioOutputRoute: AudioOutputRoute) {

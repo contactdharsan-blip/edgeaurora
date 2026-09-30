@@ -11,9 +11,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let preferences = AppPreferences()
     private let renderState = RenderState()
+    private lazy var glowAnimator = GlowAnimator(
+        preferences: preferences,
+        renderState: renderState,
+        featureSource: { [weak self] in self?.latestAudioFeatures }
+    )
     private lazy var overlay = OverlayController(
         preferences: preferences,
         renderState: renderState,
+        animator: glowAnimator,
         onPlaybackCommand: { [weak self] command, source in
             self?.nowPlaying.perform(command, for: source)
         },
@@ -38,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     private var menuBar: MenuBarController?
     private var currentTrack = NowPlayingTrack.empty
+    private var latestAudioFeatures: AudioFeatures?
     private var isAudioCaptureRequested = false
     private var requestedAudioProcessID: pid_t?
     private var audioCaptureRetryWork: DispatchWorkItem?
@@ -67,7 +74,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureMenuBar()
         configurePlaybackPipeline()
         nowPlaying.setSource(preferences.playerSource)
-        renderState.setWaveFlowDirection(preferences.waveFlowDirection)
         observePreferences()
         applyPowerPolicy()
 
@@ -139,7 +145,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         audioOutputMonitor.stop()
         invalidateAudioSession()
         audioTap.stop()
-        renderState.setWaveFlowAnimationActive(false)
         displaySleepController.setPrevented(false)
         companionWindow.hide()
     }
@@ -169,6 +174,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             isCompanionVisible = visible
             menuBar.setCompanionVisible(visible)
+            // The companion's visualizer is the only reader of RenderState's
+            // smoothed audio; stop its timer when nobody is looking.
+            if !visible { renderState.resetAudio() }
             guard !isTerminating else { return }
             syncAudioCapture()
             syncDisplaySleepPrevention()
@@ -189,14 +197,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.refreshLockScreenCard()
             menuBar?.setNowPlaying(track)
             syncAudioCapture()
-            syncWaveFlowAnimation()
             syncDisplaySleepPrevention()
         }
         beatAnalyzer?.onFeatures = { [weak self] features, session in
             guard let self,
                   audioSessionGeneration.matches(session),
                   preferences.enabled || isCompanionVisible else { return }
-            renderState.update(audio: features)
+            latestAudioFeatures = features
+            if isCompanionVisible { renderState.update(audio: features) }
         }
         audioTap.onSamples = { [weak self] samples, sampleRate, session in
             self?.beatAnalyzer?.consume(
@@ -222,24 +230,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 if enabled { overlay.show() } else { overlay.hide() }
                 syncAudioCapture()
-                syncWaveFlowAnimation()
                 syncDisplaySleepPrevention()
             }
-            .store(in: &cancellables)
-
-        preferences.$waveFlowEnabled
-            .removeDuplicates()
-            .sink { [weak self] _ in self?.syncWaveFlowAnimation() }
-            .store(in: &cancellables)
-
-        preferences.$waveSpeed
-            .removeDuplicates()
-            .sink { [weak self] speed in self?.renderState.setWaveFlowSpeed(speed) }
-            .store(in: &cancellables)
-
-        preferences.$waveFlowDirection
-            .removeDuplicates()
-            .sink { [weak self] direction in self?.renderState.setWaveFlowDirection(direction) }
             .store(in: &cancellables)
 
         preferences.$displayTarget
@@ -264,6 +256,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.applyPowerPolicy() }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.overlay.wakeAll() }
             .store(in: &cancellables)
 
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.screensDidSleepNotification)
@@ -367,6 +364,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyPowerPolicy() {
         let isLowPowerModeEnabled = ProcessInfo.processInfo.isLowPowerModeEnabled
         renderState.setLowPowerMode(isLowPowerModeEnabled)
+        glowAnimator.isLowPowerModeEnabled = isLowPowerModeEnabled
+        overlay.wakeAll()
         beatAnalyzer?.setLowPowerMode(isLowPowerModeEnabled)
         nowPlaying.setLowPowerMode(isLowPowerModeEnabled)
     }
@@ -384,16 +383,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         syncAudioCapture()
-        syncWaveFlowAnimation()
         syncDisplaySleepPrevention()
-    }
-
-    private func syncWaveFlowAnimation() {
-        let shouldAnimate = preferences.enabled
-            && preferences.waveFlowEnabled
-            && currentTrack.state == .playing
-            && !areDisplaysAsleep
-        renderState.setWaveFlowAnimationActive(shouldAnimate)
     }
 
     private func syncDisplaySleepPrevention() {

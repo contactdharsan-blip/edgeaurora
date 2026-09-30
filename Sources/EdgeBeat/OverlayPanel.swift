@@ -2,21 +2,12 @@ import AppKit
 import CoreGraphics
 import SwiftUI
 
-private final class GlowHostingView: NSHostingView<EdgeGlowView> {
-    override var safeAreaInsets: NSEdgeInsets {
-        NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
-    }
-}
-
 final class OverlayPanel: NSPanel {
-    private let preferences: AppPreferences
-    private let renderState: RenderState
-    private var glowHost: GlowHostingView?
+    private var glowView: GlowView?
     private var displayNotch: DisplayNotch?
 
-    init(screen: NSScreen, preferences: AppPreferences, renderState: RenderState) {
-        self.preferences = preferences
-        self.renderState = renderState
+    init(screen: NSScreen, preferences: AppPreferences, renderState: RenderState,
+         animator: GlowAnimator) {
         displayNotch = DisplayNotch(screen: screen)
         super.init(
             contentRect: screen.frame,
@@ -37,13 +28,12 @@ final class OverlayPanel: NSPanel {
         isMovableByWindowBackground = false
         hidesOnDeactivate = false
 
-        let view = EdgeGlowView(preferences: preferences, renderState: renderState,
-                                notch: displayNotch)
-        let host = GlowHostingView(rootView: view)
-        host.frame = NSRect(origin: .zero, size: screen.frame.size)
-        host.autoresizingMask = [.width, .height]
-        contentView = host
-        glowHost = host
+        let view = GlowView(frame: NSRect(origin: .zero, size: screen.frame.size),
+                            animator: animator, preferences: preferences,
+                            renderState: renderState, notch: displayNotch)
+        view.autoresizingMask = [.width, .height]
+        contentView = view
+        glowView = view
     }
 
     override var canBecomeKey: Bool { false }
@@ -56,11 +46,15 @@ final class OverlayPanel: NSPanel {
         let updatedNotch = DisplayNotch(screen: screen)
         guard displayNotch != updatedNotch else { return }
         displayNotch = updatedNotch
-        glowHost?.rootView = EdgeGlowView(
-            preferences: preferences,
-            renderState: renderState,
-            notch: updatedNotch
-        )
+        glowView?.notch = updatedNotch
+    }
+
+    func wake() {
+        glowView?.wake()
+    }
+
+    func stopRendering() {
+        glowView?.stop()
     }
 
     func enableLockScreenVisibility() {
@@ -142,6 +136,7 @@ private final class LockScreenCardPanel: NSPanel {
 final class OverlayController {
     private let preferences: AppPreferences
     private let renderState: RenderState
+    private let animator: GlowAnimator
     private let onPlaybackCommand: (PlaybackCommand, PlayerSource) -> Void
     private let onSeek: (TimeInterval, PlayerSource) -> Void
     private var panels: [CGDirectDisplayID: OverlayPanel] = [:]
@@ -151,11 +146,12 @@ final class OverlayController {
     private var isObserving = false
     private var pendingSpaceRefresh: DispatchWorkItem?
 
-    init(preferences: AppPreferences, renderState: RenderState,
+    init(preferences: AppPreferences, renderState: RenderState, animator: GlowAnimator,
          onPlaybackCommand: @escaping (PlaybackCommand, PlayerSource) -> Void,
          onSeek: @escaping (TimeInterval, PlayerSource) -> Void) {
         self.preferences = preferences
         self.renderState = renderState
+        self.animator = animator
         self.onPlaybackCommand = onPlaybackCommand
         self.onSeek = onSeek
     }
@@ -172,6 +168,7 @@ final class OverlayController {
         pendingSpaceRefresh = nil
         panels.values.forEach {
             $0.disableLockScreenVisibility()
+            $0.stopRendering()
             $0.orderOut(nil)
         }
         cardPanel?.disableLockScreenVisibility()
@@ -189,6 +186,7 @@ final class OverlayController {
 
         for id in Array(panels.keys) where !selectedIDs.contains(id) {
             panels[id]?.disableLockScreenVisibility()
+            panels[id]?.stopRendering()
             panels[id]?.orderOut(nil)
             panels[id] = nil
         }
@@ -200,7 +198,7 @@ final class OverlayController {
                 panel = existing
             } else {
                 panel = OverlayPanel(screen: screen, preferences: preferences,
-                                     renderState: renderState)
+                                     renderState: renderState, animator: animator)
                 panels[id] = panel
             }
             panel.updateDisplay(screen)
@@ -211,6 +209,11 @@ final class OverlayController {
             }
         }
         refreshLockScreenCard(on: NSScreen.main, displayID: mainID)
+    }
+
+    /// Resumes every display's glow, e.g. after a power-mode change alters the frame rate.
+    func wakeAll() {
+        panels.values.forEach { $0.wake() }
     }
 
     func refreshLockScreenCard() {
