@@ -18,6 +18,8 @@ struct GlowUniforms {
     var color = SIMD4<Float>.zero
     /// flow length, flow direction (+1/-1), drop flash, aurora drift
     var flow = SIMD4<Float>.zero
+    /// reactivity multiplier, ray length multiplier (1 = tuned default), unused, unused
+    var tuning = SIMD4<Float>(1, 1, 0, 0)
     /// age (seconds), strength; strength 0 marks an empty slot
     var shocks: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
     var colors: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
@@ -79,6 +81,7 @@ enum GlowShader {
         float4 energy;
         float4 color;
         float4 flow;
+        float4 tuning;
         float4 shocks[4];
         float4 colors[5];
         float4 bands[8];
@@ -277,7 +280,11 @@ enum GlowShader {
         float swell = 0.55 * loop_noise(c * n1 - drift * 0.9, n1)
                     + 0.30 * loop_noise(c * n2 + drift * 1.5, n2)
                     + 0.15 * loop_noise(c * n3 - drift * 2.6, n3);
-        float reach = base * (0.4 + 0.6 * band) * (1.0 + 0.22 * kick) + base * 0.3 * shock;
+        // The owner's Reactivity slider scales every beat swing; 1 is the
+        // tuned default.
+        float react = u.tuning.x;
+        float reach = base * (0.4 + 0.6 * band) * (1.0 + 0.22 * kick * react)
+                    + base * 0.3 * shock * react;
         float end_line = clamp(reach * (0.55 + 0.65 * swell), 3.0, strip_depth * 0.68);
         float start_line = 1.0 + 3.5 * loop_noise(c * n2 - drift * 0.6, n2);
         end_line = max(end_line, start_line + 2.0);
@@ -309,8 +316,12 @@ enum GlowShader {
         // Ray length is where the music shows: each ray reaches as far as the
         // band under it is loud (bass rays along the bottom, treble across the
         // top), shrinking to stubs in silence and thrown long by kicks.
+        // Reactivity widens or narrows how far the music swings the rays
+        // around their middle length; the Ray Length slider scales them all.
         float drive = pow(band, 0.8) * (0.45 + 0.75 * level);
-        float ray_length = min((4.0 + 80.0 * ray) * (0.08 + 1.1 * drive) * (1.0 + 0.4 * kick), room);
+        drive = clamp(0.5 + (drive - 0.5) * react, 0.0, 1.6);
+        float ray_length = min((4.0 + 80.0 * ray) * u.tuning.y * (0.08 + 1.1 * drive)
+                               * (1.0 + 0.4 * kick * react), room);
         float streak = past > 0.0 && ray_length > 0.0
             ? ray * pow(clamp(1.0 - past / ray_length, 0.0, 1.0), 1.6)
             : 0.0;
@@ -336,14 +347,14 @@ enum GlowShader {
         // the band instead of starting brighter than the fill beside them.
         float halos = 0.35 * end_halo + 0.7 * start_halo + 0.3 * ray_halo + 0.2 * bloom;
 
-        float energy = (0.7 + 0.3 * band) * (1.0 + 0.2 * kick + 0.1 * snare + 0.15 * u.flow.z)
+        float energy = (0.7 + 0.3 * band) * (1.0 + (0.2 * kick + 0.1 * snare) * react + 0.15 * u.flow.z)
                      * (0.9 + 0.1 * level);
         // The body keeps its colour in quiet passages; the lines, rays and
         // their halos carry the (deliberately gentle) swings.
-        float body_energy = (0.85 + 0.15 * band) * (1.0 + 0.1 * kick + 0.1 * u.flow.z);
+        float body_energy = (0.85 + 0.15 * band) * (1.0 + 0.1 * kick * react + 0.1 * u.flow.z);
         float brightness = fill * body_energy
                          + (0.3 * end_glow + 0.6 * start_glow + 0.35 * streak + halos) * energy
-                         + 0.15 * shock * end_glow;
+                         + 0.15 * shock * react * end_glow;
 
         float mask = 1.0;
         if (u.color.z > 0.5) {

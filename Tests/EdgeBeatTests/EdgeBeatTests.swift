@@ -181,6 +181,30 @@ final class EdgeBeatTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(startedAt), 1.5)
     }
 
+    func testAuroraPreferencesDefaultToTheTunedLookAndPersist() throws {
+        let suite = "edgebeat-aurora-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let first = AppPreferences(defaults: defaults)
+        XCTAssertTrue(first.frostedGlass)
+        XCTAssertEqual(first.reactivity, 0.5)
+        XCTAssertEqual(first.rayLength, 0.5)
+
+        first.frostedGlass = false
+        first.reactivity = 0.9
+        first.rayLength = 0.2
+        let second = AppPreferences(defaults: defaults)
+        XCTAssertFalse(second.frostedGlass)
+        XCTAssertEqual(second.reactivity, 0.9)
+        XCTAssertEqual(second.rayLength, 0.2)
+
+        defaults.set(Double.nan, forKey: "aurora.reactivity")
+        XCTAssertEqual(AppPreferences(defaults: defaults).reactivity, 0.5)
+        XCTAssertEqual(AppPreferences.tuningMultiplier(0), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(AppPreferences.tuningMultiplier(1), 2, accuracy: 1e-9)
+    }
+
     private func makeTrack(title: String,
                            artworkRevision: String = "") -> NowPlayingTrack {
         NowPlayingTrack(

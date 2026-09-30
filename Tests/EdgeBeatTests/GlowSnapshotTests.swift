@@ -187,31 +187,86 @@ final class GlowSnapshotTests: XCTestCase {
         XCTAssertGreaterThan(Double(litArea(loudImage)), 1.2 * Double(litArea(quietImage)))
     }
 
-    func testRaysReachFurtherWhenTheMusicIsLoud() throws {
-        func rayReach(bandValue: Float, level: Double, name: String) throws -> Double {
-            let harness = Harness()
-            harness.features.bands = bands { _ in bandValue }
-            harness.features.level = level
-            harness.run(seconds: 2)
-            let image = try render(harness)
-            try save(image, name: name)
-            // Mean depth, over the bottom edge, of the deepest faintly lit pixel.
-            let height = Int(size.height)
-            var total = 0
-            var columns = 0
-            for x in stride(from: 200, to: Int(size.width) - 200, by: 3) {
-                columns += 1
-                for depth in stride(from: 200, through: 0, by: -1)
-                    where alpha(image, x, height - 1 - depth) > 0.03 {
-                    total += depth
-                    break
-                }
+    /// Mean depth, over the bottom edge, of the deepest pixel lit above
+    /// `threshold`. A low threshold follows the faint halo, a higher one the
+    /// visible rays.
+    /// With `percentile`, the reach at that percentile of columns instead of
+    /// the mean: rays are sparse, so the mean mostly measures the gaps.
+    private func rayReach(_ image: [UInt8], threshold: Double = 0.03,
+                          percentile: Double? = nil) -> Double {
+        let height = Int(size.height)
+        var reaches: [Int] = []
+        for x in stride(from: 200, to: Int(size.width) - 200, by: 3) {
+            var reach = 0
+            for depth in stride(from: 200, through: 0, by: -1)
+                where alpha(image, x, height - 1 - depth) > threshold {
+                reach = depth
+                break
             }
-            return Double(total) / Double(columns)
+            reaches.append(reach)
         }
-        let quiet = try rayReach(bandValue: 0.15, level: 0.15, name: "07-rays-quiet")
-        let loud = try rayReach(bandValue: 0.9, level: 0.9, name: "08-rays-loud")
+        guard let percentile else {
+            return Double(reaches.reduce(0, +)) / Double(reaches.count)
+        }
+        let sorted = reaches.sorted()
+        return Double(sorted[min(sorted.count - 1, Int(Double(sorted.count) * percentile))])
+    }
+
+    private func steadyScene(band: Float, level: Double, name: String,
+                             configure: (AppPreferences) -> Void = { _ in }) throws -> [UInt8] {
+        let harness = Harness()
+        configure(harness.preferences)
+        harness.features.bands = bands { _ in band }
+        harness.features.level = level
+        harness.run(seconds: 2)
+        let image = try render(harness)
+        try save(image, name: name)
+        return image
+    }
+
+    func testRaysReachFurtherWhenTheMusicIsLoud() throws {
+        let quiet = rayReach(try steadyScene(band: 0.15, level: 0.15, name: "07-rays-quiet"))
+        let loud = rayReach(try steadyScene(band: 0.9, level: 0.9, name: "08-rays-loud"))
         XCTAssertGreaterThan(loud, quiet * 1.6, "loud \(loud) vs quiet \(quiet)")
+    }
+
+    func testRayLengthSliderScalesTheRays() throws {
+        let short = rayReach(try steadyScene(band: 0.7, level: 0.7, name: "09-raylength-0") {
+            $0.rayLength = 0
+        }, threshold: 0.12, percentile: 0.95)
+        let long = rayReach(try steadyScene(band: 0.7, level: 0.7, name: "10-raylength-1") {
+            $0.rayLength = 1
+        }, threshold: 0.12, percentile: 0.95)
+        XCTAssertGreaterThan(long, short * 1.4, "long \(long) vs short \(short)")
+    }
+
+    func testDefaultTuningKeepsTheTunedLook() throws {
+        // The sliders' midpoints must reproduce the look the owner signed off on.
+        XCTAssertEqual(AppPreferences.tuningMultiplier(0.5), 1, accuracy: 1e-9)
+        let defaults = try steadyScene(band: 0.6, level: 0.6, name: "11-tuning-default")
+        let explicit = try steadyScene(band: 0.6, level: 0.6, name: "12-tuning-explicit") {
+            $0.reactivity = 0.5
+            $0.rayLength = 0.5
+        }
+        XCTAssertEqual(defaults, explicit)
+    }
+
+    func testReactivityWidensTheKickSwing() throws {
+        func kickSwing(reactivity: Double) throws -> Double {
+            let harness = Harness()
+            harness.preferences.reactivity = reactivity
+            harness.features.bands = bands { _ in 0.6 }
+            harness.features.level = 0.6
+            harness.run(seconds: 1.5)
+            let before = rayReach(try render(harness))
+            harness.features.kickSerial = 1
+            harness.features.kickStrength = 1
+            harness.run(seconds: 1.0 / 20.0)
+            return rayReach(try render(harness)) - before
+        }
+        let calm = try kickSwing(reactivity: 0)
+        let lively = try kickSwing(reactivity: 1)
+        XCTAssertGreaterThan(lively, calm * 1.5 + 0.5, "lively \(lively) vs calm \(calm)")
     }
 
     func testShockwaveClimbsTheSides() throws {

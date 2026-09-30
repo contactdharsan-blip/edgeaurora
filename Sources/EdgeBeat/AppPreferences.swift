@@ -94,6 +94,18 @@ final class AppPreferences: ObservableObject {
     @Published var waveFlowDirection: WaveFlowDirection {
         didSet { defaults.set(waveFlowDirection.rawValue, forKey: Keys.waveFlowDirection) }
     }
+    /// Frosted-glass blur behind the aurora band.
+    @Published var frostedGlass: Bool {
+        didSet { defaults.set(frostedGlass, forKey: Keys.frostedGlass) }
+    }
+    /// How hard beats swing the aurora; 0.5 is the tuned default.
+    @Published var reactivity: Double {
+        didSet { defaults.set(reactivity, forKey: Keys.reactivity) }
+    }
+    /// How far the aurora's rays reach; 0.5 is the tuned default.
+    @Published var rayLength: Double {
+        didSet { defaults.set(rayLength, forKey: Keys.rayLength) }
+    }
     @Published var displayTarget: DisplayTarget {
         didSet { defaults.set(displayTarget.rawValue, forKey: Keys.displayTarget) }
     }
@@ -128,6 +140,9 @@ final class AppPreferences: ObservableObject {
         waveFlowDirection = WaveFlowDirection(
             rawValue: defaults.string(forKey: Keys.waveFlowDirection) ?? ""
         ) ?? .clockwise
+        frostedGlass = defaults.object(forKey: Keys.frostedGlass) as? Bool ?? true
+        reactivity = Self.loadUnitValue(defaults: defaults, key: Keys.reactivity, fallback: 0.5)
+        rayLength = Self.loadUnitValue(defaults: defaults, key: Keys.rayLength, fallback: 0.5)
         displayTarget = DisplayTarget(rawValue: defaults.string(forKey: Keys.displayTarget) ?? "") ?? .builtIn
         nowPlayingCardEnabled = defaults.object(forKey: Keys.nowPlayingCardEnabled) as? Bool ?? false
         playerSource = PlayerSource(rawValue: defaults.string(forKey: Keys.playerSource) ?? "") ?? .automatic
@@ -137,6 +152,12 @@ final class AppPreferences: ObservableObject {
         guard let rgb = color.usingColorSpace(.deviceRGB) else { return }
         defaults.set([rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent],
                      forKey: key)
+    }
+
+    /// Maps a 0...1 slider to a 0.5x...2x multiplier, exactly 1x at the
+    /// midpoint, so the default slider position keeps the tuned look.
+    static func tuningMultiplier(_ value: Double) -> Double {
+        pow(4, clampedUnitValue(value, fallback: 0.5) - 0.5)
     }
 
     /// Reads a user-controlled slider value defensively. UserDefaults can be
@@ -187,6 +208,9 @@ final class AppPreferences: ObservableObject {
         static let waveSpeed = "waveFlow.speed"
         static let waveFlowDirection = "waveFlow.direction"
         static let displayTarget = "display.target"
+        static let frostedGlass = "aurora.frostedGlass"
+        static let reactivity = "aurora.reactivity"
+        static let rayLength = "aurora.rayLength"
         static let nowPlayingCardEnabled = "nowPlaying.cardEnabled"
         static let playerSource = "player.source"
     }

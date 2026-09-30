@@ -68,6 +68,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var waveLengthValueLabel: NSTextField?
     private var waveIntensityValueLabel: NSTextField?
     private var waveSpeedValueLabel: NSTextField?
+    private var reactivityValueLabel: NSTextField?
+    private var rayLengthValueLabel: NSTextField?
+    private var frostedGlassItem: NSMenuItem!
     private var colorSourceItems: [ColorSource: NSMenuItem] = [:]
     private var colorModeItems: [CustomColorMode: NSMenuItem] = [:]
     private var colorPresetItems: [MenuColorPreset: NSMenuItem] = [:]
@@ -175,6 +178,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                                     value: preferences.thickness,
                                     action: #selector(thicknessChanged(_:)),
                                     valueLabel: &thicknessValueLabel))
+        menu.addItem(makeAuroraMenu())
         menu.addItem(makeWaveMenu())
         menu.addItem(makeDisplayMenu())
 
@@ -293,6 +297,27 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             colorPresetItems[preset] = item
             submenu.addItem(item)
         }
+        parent.submenu = submenu
+        return parent
+    }
+
+    private func makeAuroraMenu() -> NSMenuItem {
+        let parent = NSMenuItem(title: "Aurora", action: nil, keyEquivalent: "")
+        parent.image = symbol("sparkles")
+        let submenu = NSMenu(title: "Aurora")
+
+        frostedGlassItem = commandItem("Frosted Glass", action: #selector(toggleFrostedGlass(_:)))
+        submenu.addItem(frostedGlassItem)
+        submenu.addItem(.separator())
+        submenu.addItem(makeSliderItem(title: "Reactivity", symbol: "waveform.path.ecg",
+                                       value: preferences.reactivity,
+                                       action: #selector(reactivityChanged(_:)),
+                                       valueLabel: &reactivityValueLabel))
+        submenu.addItem(makeSliderItem(title: "Ray Length", symbol: "rays",
+                                       value: preferences.rayLength,
+                                       action: #selector(rayLengthChanged(_:)),
+                                       valueLabel: &rayLengthValueLabel))
+
         parent.submenu = submenu
         return parent
     }
@@ -548,6 +573,21 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         thicknessValueLabel?.stringValue = "\(Int((sender.doubleValue * 100).rounded()))%"
     }
 
+    @objc private func toggleFrostedGlass(_ sender: NSMenuItem) {
+        preferences.frostedGlass.toggle()
+        syncMenuState()
+    }
+
+    @objc private func reactivityChanged(_ sender: NSSlider) {
+        preferences.reactivity = sender.doubleValue
+        reactivityValueLabel?.stringValue = "\(Int((sender.doubleValue * 100).rounded()))%"
+    }
+
+    @objc private func rayLengthChanged(_ sender: NSSlider) {
+        preferences.rayLength = sender.doubleValue
+        rayLengthValueLabel?.stringValue = "\(Int((sender.doubleValue * 100).rounded()))%"
+    }
+
     @objc private func toggleWaveFlow(_ sender: NSMenuItem) {
         preferences.waveFlowEnabled.toggle()
         syncMenuState()
@@ -627,6 +667,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private func syncMenuState() {
         lightingItem?.state = preferences.enabled ? .on : .off
         waveFlowItem?.state = preferences.waveFlowEnabled ? .on : .off
+        frostedGlassItem?.state = preferences.frostedGlass ? .on : .off
         let showWaveControls = preferences.waveFlowEnabled
         waveControlsSeparatorItem?.isHidden = !showWaveControls
         waveLengthItem?.isHidden = !showWaveControls

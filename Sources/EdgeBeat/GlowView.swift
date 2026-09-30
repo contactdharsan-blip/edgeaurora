@@ -244,7 +244,7 @@ final class GlowView: NSView {
 
     @objc private func step(_ link: CADisplayLink) {
         animator.advance(to: link.timestamp)
-        backdrop?.update(visibility: animator.visibility)
+        backdrop?.update(visibility: preferences.frostedGlass ? animator.visibility : 0)
         let active = animator.isActive
         if !active && renderedIdleFrame {
             link.isPaused = true

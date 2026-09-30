@@ -173,6 +173,8 @@ final class GlowAnimator {
         next.flow = SIMD4(Float(0.08 + preferences.waveLength * 0.44),
                           Float(preferences.waveFlowDirection.phaseSign), dropFlash,
                           Float(auroraDrift))
+        next.tuning = SIMD4(Float(AppPreferences.tuningMultiplier(preferences.reactivity)),
+                            Float(AppPreferences.tuningMultiplier(preferences.rayLength)), 0, 0)
         for (index, shock) in shocks.enumerated() {
             next.setShock(index, age: shock.age, strength: shock.strength)
         }
