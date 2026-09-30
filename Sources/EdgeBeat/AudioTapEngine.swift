@@ -28,8 +28,6 @@ final class AudioTapEngine {
     private var activeSession: UInt64?
     private var hasReceivedSamples = false
     private var hasReportedEmptyBuffer = false
-    private var pendingSamples: [Float] = []
-    private let sampleDeliverySize = 2048
 
     func start(processID: pid_t?, session: UInt64) {
         controlQueue.async { [weak self] in
@@ -142,12 +140,9 @@ final class AudioTapEngine {
                     self.logger.notice("Receiving audio samples")
                     self.onStatusChange?("Audio capture active")
                 }
-                self.pendingSamples.append(contentsOf: samples)
-                guard self.pendingSamples.count >= self.sampleDeliverySize else { return }
-                var batch: [Float] = []
-                swap(&batch, &self.pendingSamples)
-                self.pendingSamples.reserveCapacity(self.sampleDeliverySize)
-                self.onSamples?(batch, sampleRate, session)
+                // Straight through: the analyser buffers and hops on its own,
+                // so batching here would only add latency.
+                self.onSamples?(samples, sampleRate, session)
             }
             try check(status, "Create audio IO callback")
             guard let createdIOProc else {
@@ -179,7 +174,6 @@ final class AudioTapEngine {
             format = AudioStreamBasicDescription()
             hasReceivedSamples = false
             hasReportedEmptyBuffer = false
-            pendingSamples.removeAll(keepingCapacity: true)
         }
     }
 
