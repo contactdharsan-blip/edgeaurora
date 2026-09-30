@@ -26,6 +26,7 @@ final class GlowAnimator {
     private var colorPhase: Double = 0
     private var pendingColorShift: Double = 0
     private var flowHead: Double = 0
+    private var auroraDrift: Double = 0
     private var shocks: [(age: Float, strength: Float)] = []
     private var lastKickSerial: UInt64?
     private var lastSnareSerial: UInt64?
@@ -56,7 +57,7 @@ final class GlowAnimator {
     /// base reach; the shader caps the reach so its falloff reaches exactly
     /// zero inside the strip, and the strip's inner boundary never shows.
     static func stripDepth(thickness: Double) -> CGFloat {
-        ceil(baseReach(thickness: thickness) * 2.8)
+        ceil(baseReach(thickness: thickness) * 2.4)
     }
 
     static func cornerRadius(for size: CGSize) -> CGFloat {
@@ -120,6 +121,10 @@ final class GlowAnimator {
         pendingColorShift -= shift
         colorPhase = colorPhase.truncatingRemainder(dividingBy: 1)
 
+        // The aurora's end line drifts along the rim; the music sets its pace.
+        auroraDrift += Double(dt) * Double(0.25 + 0.9 * level + 0.6 * kick + 0.35 * intensity)
+        auroraDrift = auroraDrift.truncatingRemainder(dividingBy: 10_000)
+
         if preferences.waveFlowEnabled {
             let speed = 0.14 * pow(preferences.waveSpeed, 1.25)
                 * Double(1 + level * 0.5 + bass * 0.4 + kick * 0.35)
@@ -157,7 +162,8 @@ final class GlowAnimator {
         next.color = SIMD4(Float(colorPhase), Float(colors.count),
                            preferences.waveFlowEnabled ? 1 : 0, Float(flowHead))
         next.flow = SIMD4(Float(0.08 + preferences.waveLength * 0.44),
-                          Float(preferences.waveFlowDirection.phaseSign), dropFlash, 0)
+                          Float(preferences.waveFlowDirection.phaseSign), dropFlash,
+                          Float(auroraDrift))
         for (index, shock) in shocks.enumerated() {
             next.setShock(index, age: shock.age, strength: shock.strength)
         }

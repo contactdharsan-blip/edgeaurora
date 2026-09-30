@@ -222,6 +222,8 @@ final class BeatAnalyzerTests: XCTestCase {
 
         analyzer.beginSession(7)
         let published = expectation(description: "features published")
+        // Half a second of audio publishes up to 15 times; any one proves it.
+        published.assertForOverFulfill = false
         analyzer.onFeatures = { _, _ in published.fulfill() }
         analyzer.consume(
             samples: whiteNoise(seconds: 0.5, amplitude: 0.3, sampleRate: sampleRate),

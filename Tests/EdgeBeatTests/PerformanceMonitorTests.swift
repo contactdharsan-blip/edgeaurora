@@ -6,13 +6,15 @@ final class PerformanceMonitorTests: XCTestCase {
     func testCPUDeltaReflectsBurnedTime() throws {
         let start = try XCTUnwrap(PerformanceMonitor.read())
 
-        // Burn ~0.3s of CPU on this thread. This proves the mach-time ->
-        // seconds conversion is correct: if it were off by the
-        // numer/denom ratio (~41.67x on Apple silicon) this delta would be
-        // wildly out of the asserted range.
-        let deadline = Date().addingTimeInterval(0.3)
+        // Burn 0.3 s of this thread's CPU time, measured by the thread's own
+        // clock rather than the wall clock: on a busy machine the thread can
+        // be descheduled for most of a wall-clock window. This proves the
+        // mach-time -> seconds conversion: were it off by the numer/denom
+        // ratio (~41.67x on Apple silicon) the delta would land far outside
+        // the asserted range.
+        let burnStart = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
         var sink: Double = 0
-        while Date() < deadline {
+        while clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - burnStart < 300_000_000 {
             sink += sink.squareRoot() + 1
         }
         XCTAssertTrue(sink.isFinite)
@@ -20,8 +22,9 @@ final class PerformanceMonitorTests: XCTestCase {
         let end = try XCTUnwrap(PerformanceMonitor.read())
         let deltaCPU = end.cpuSeconds - start.cpuSeconds
 
-        XCTAssertGreaterThan(deltaCPU, 0.2)
-        XCTAssertLessThan(deltaCPU, 0.6)
+        // Process time includes other test threads, so it can exceed 0.3 s.
+        XCTAssertGreaterThan(deltaCPU, 0.28)
+        XCTAssertLessThan(deltaCPU, 1.5)
     }
 
     func testEnergyIsMonotonicNonDecreasing() throws {

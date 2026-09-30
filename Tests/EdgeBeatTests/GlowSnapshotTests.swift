@@ -133,7 +133,7 @@ final class GlowSnapshotTests: XCTestCase {
         harness.features.bands = bands { _ in 1 }
         harness.features.level = 1
         harness.features.kickSerial = 0
-        harness.run(seconds: 0.1)
+        harness.run(seconds: 1)
         harness.features.kickSerial = 1
         harness.features.kickStrength = 1
         harness.run(seconds: 1.0 / 30.0)
@@ -146,7 +146,10 @@ final class GlowSnapshotTests: XCTestCase {
         // glow must have faded out before the strip ends, or it shows as a line.
         XCTAssertLessThan(alpha(image, 756, 949 - depth), 0.02)
         XCTAssertLessThan(alpha(image, depth - 1, 475), 0.02)
-        XCTAssertGreaterThan(alpha(image, 756, 948), 0.5)
+        // The ribbon floats a few points in from the edge; somewhere across the
+        // bottom band it must be solidly lit.
+        let bottomBand = (949 - 60)..<949
+        XCTAssertGreaterThan(bottomBand.map { alpha(image, 756, $0) }.max() ?? 0, 0.5)
     }
 
     func testQuietPassageIsDimmerThanLoudOne() throws {

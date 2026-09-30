@@ -90,10 +90,10 @@ final class GlowRenderer {
 /// Hosts the glow for one display as four Metal strips along the edges, so
 /// only the band that can light up is ever rendered or composited.
 final class GlowView: NSView {
-    /// Pixels per point for the strips. The glow is soft, so rendering at one
-    /// pixel per point on a Retina display looks the same for a quarter of the
-    /// pixels; see `resolutionScale(backing:)`.
-    static var renderAtPointResolution = true
+    /// Pixels per point for the strips. The aurora's start and end lines are
+    /// crisp, so the strips render at the display's full backing scale; a soft
+    /// glow could get away with one pixel per point, a sharp line cannot.
+    static var renderAtPointResolution = false
 
     var notch: DisplayNotch? {
         didSet { if notch != oldValue { layoutStrips() } }

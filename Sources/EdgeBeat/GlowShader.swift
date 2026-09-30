@@ -16,7 +16,7 @@ struct GlowUniforms {
     var energy = SIMD4<Float>.zero
     /// color phase, color count, mode (0 glow, 1 wave flow), flow head
     var color = SIMD4<Float>.zero
-    /// flow length, flow direction (+1/-1), drop flash, unused
+    /// flow length, flow direction (+1/-1), drop flash, aurora drift
     var flow = SIMD4<Float>.zero
     /// age (seconds), strength; strength 0 marks an empty slot
     var shocks: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
@@ -151,7 +151,7 @@ enum GlowShader {
         float2 q = clamp(p, float2(0.0), size);
         float dl = q.x, dr = w - q.x, dt = q.y, db = h - q.y;
         float nearest = min(min(dl, dr), min(dt, db));
-        const float softness = 28.0;
+        const float softness = 60.0;
         float wl = exp(-(dl - nearest) / softness);
         float wr = exp(-(dr - nearest) / softness);
         float wt = exp(-(dt - nearest) / softness);
@@ -180,6 +180,17 @@ enum GlowShader {
         return mix(u.colors[i].rgb, u.colors[j].rgb, f);
     }
 
+    // Deep, saturated version of a colour: the hue is kept, saturation is
+    // pushed to nearly full and value held below white, so album colours read
+    // as jewel tones rather than pastels. Near-greys stay grey.
+    static float3 vivid(float3 c) {
+        float high = max(c.r, max(c.g, c.b));
+        float low = min(c.r, min(c.g, c.b));
+        if (high - low < 0.05) { return c * 0.8; }
+        float3 shape = (c - low) / (high - low);
+        return mix(float3(1.0), shape, 0.93) * 0.8;
+    }
+
     static float hash(float n) {
         return fract(sin(n * 12.9898) * 43758.5453);
     }
@@ -200,12 +211,18 @@ enum GlowShader {
         return max(-k * log(sum), 0.0);
     }
 
-    // Compactly supported bell (Wendland): 1 at the edge, exactly 0 with zero
-    // slope at x = 1, so the glow ends without a visible boundary.
-    static float bell(float x) {
-        x = clamp(x, 0.0, 1.0);
-        float a = 1.0 - x;
-        return a * a * a * (1.0 + 3.0 * x);
+    // Smooth value noise that repeats every `period` cells, so a pattern laid
+    // around the whole perimeter meets itself without a seam.
+    static float loop_noise(float x, float period) {
+        float i = floor(x);
+        float f = x - i;
+        float a = hash(i - period * floor(i / period));
+        float b = hash((i + 1.0) - period * floor((i + 1.0) / period));
+        return mix(a, b, f * f * (3.0 - 2.0 * f));
+    }
+
+    static float cells(float perimeter_points, float spacing) {
+        return max(1.0, round(perimeter_points / spacing));
     }
 
     fragment float4 glow_fragment(VertexOut in [[stage_in]],
@@ -227,6 +244,8 @@ enum GlowShader {
         float base = u.shape.x;
         float strip_depth = u.shape.y;
         float time = u.screen.w;
+        float drift = u.flow.w;
+        float perimeter_points = 2.0 * (u.screen.x + u.screen.y);
 
         // Each kick launches a shockwave from bottom centre that climbs both
         // sides and meets at the top.
@@ -239,17 +258,45 @@ enum GlowShader {
             shock += strength * (1.0 - clamp(front, 0.0, 1.0)) * exp(-x * x);
         }
 
-        const float support = 1.6;
-        float reach = base * (0.16 + 0.84 * band) * (1.0 + 0.7 * kick) + base * 0.75 * shock;
-        reach = clamp(reach, 2.0, strip_depth / support);
+        // The ribbon is bounded by two crisp lines. The start line hugs the
+        // screen edge and breathes a few points; the end line rides the music
+        // (its reach follows the band under it) and undulates like the lower
+        // edge of an aurora curtain, drifting along the rim faster as the song
+        // gets louder.
+        float n1 = cells(perimeter_points, 230.0);
+        float n2 = cells(perimeter_points, 90.0);
+        float n3 = cells(perimeter_points, 36.0);
+        float swell = 0.55 * loop_noise(c * n1 - drift * 0.9, n1)
+                    + 0.30 * loop_noise(c * n2 + drift * 1.5, n2)
+                    + 0.15 * loop_noise(c * n3 - drift * 2.6, n3);
+        float reach = base * (0.2 + 0.8 * band) * (1.0 + 0.55 * kick) + base * 0.7 * shock;
+        float end_line = clamp(reach * (0.55 + 0.65 * swell), 3.0, strip_depth * 0.8);
+        float start_line = 1.0 + 3.5 * loop_noise(c * n2 - drift * 0.6, n2);
+        end_line = max(end_line, start_line + 2.0);
 
-        float d = halo_distance(p, u, max(6.0, reach * 0.35));
-        float halo = bell(d / (reach * support));
-        float core = exp(-edge / (1.2 + 0.03 * reach));
-        float brightness = halo * (0.5 + 0.5 * band) + 0.85 * core * (0.35 + 0.65 * band);
-        brightness += 0.45 * shock * halo;
-        brightness *= 1.0 + 0.5 * kick + 0.35 * snare + 0.3 * u.flow.z;
-        brightness *= 0.8 + 0.2 * level;
+        float d = halo_distance(p, u, 14.0);
+        float aa = max(fwidth(d), 0.35);
+        float inside = smoothstep(start_line - aa, start_line + aa, d)
+                     * smoothstep(end_line + aa, end_line - aa, d);
+        float depth = clamp((d - start_line) / (end_line - start_line), 0.0, 1.0);
+
+        // Curtain rays: streaks across the ribbon that drift along it.
+        float n4 = cells(perimeter_points, 10.0);
+        float n5 = cells(perimeter_points, 4.5);
+        float rays = (0.35 + 0.65 * loop_noise(c * n4 + drift * 2.0, n4))
+                   * (0.7 + 0.3 * loop_noise(c * n5 - drift * 3.4, n5));
+
+        float end_offset = (d - end_line) / 1.4;
+        float start_offset = (d - start_line) / 1.0;
+        float end_glow = exp(-end_offset * end_offset);
+        float start_glow = exp(-start_offset * start_offset);
+        float spill = d > end_line ? 0.22 * exp(-(d - end_line) / 4.0) : 0.0;
+        float fill = inside * (0.34 + 0.46 * pow(depth, 1.5)) * rays;
+
+        float energy = (0.5 + 0.5 * band) * (1.0 + 0.5 * kick + 0.35 * snare + 0.3 * u.flow.z)
+                     * (0.85 + 0.15 * level);
+        float brightness = (fill + 0.95 * end_glow + 0.6 * start_glow + spill) * energy
+                         + 0.4 * shock * end_glow;
 
         float mask = 1.0;
         if (u.color.z > 0.5) {
@@ -262,15 +309,18 @@ enum GlowShader {
             mask = max(mask, 0.08 * band);
         }
 
-        float3 color = palette(u, s * 0.85 + u.color.x);
-        float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
-        color = clamp(mix(float3(luma), color, 1.3), 0.0, 1.0);
-        color = mix(color, float3(1.0), clamp(core * (0.12 * band + 0.35 * kick + 0.25 * u.flow.z), 0.0, 1.0));
+        // Colour runs across the ribbon from one palette entry at the edge to
+        // the next at the end line, the way an aurora shifts hue with height.
+        float hue = s * 0.85 + u.color.x;
+        float3 color = mix(vivid(palette(u, hue)), vivid(palette(u, hue + 0.3)),
+                           smoothstep(0.0, 1.0, depth));
+        // The ribbon's body sits deeper than its lines, which carry the light.
+        color *= mix(0.7, 1.0, max(end_glow, start_glow));
+        color = mix(color, float3(1.0),
+                    clamp(end_glow * (0.05 + 0.25 * kick + 0.15 * u.flow.z), 0.0, 1.0));
 
-        // Treble shimmer: soft, tinted glints that swell and fade along the rim
-        // where the highs are, each cell on its own random phase so they never
-        // flicker in step.
-        float perimeter_points = 2.0 * (u.screen.x + u.screen.y);
+        // Treble shimmer: soft, tinted glints on the start line where the highs
+        // are, each cell on its own random phase so they never flicker in step.
         float along = c * perimeter_points / 22.0;
         float cell = floor(along);
         float cycle = time * 3.0 + hash(cell * 1.37) * 10.0;
@@ -279,12 +329,12 @@ enum GlowShader {
         float lit = step(1.0 - 0.45 * treble * band, chance);
         float offset = (fract(along) - 0.5) * 3.2;
         float sparkle = lit * sin(life * 3.14159) * exp(-offset * offset)
-                      * treble * exp(-edge / 5.0);
+                      * treble * start_glow;
 
         float gain = u.shape.z * presence;
         float alpha = clamp(brightness * mask * gain, 0.0, 1.0);
         float glints = clamp(0.8 * sparkle * gain, 0.0, 1.0);
-        float3 glint_color = mix(color, float3(1.0), 0.55);
+        float3 glint_color = mix(color, float3(1.0), 0.4);
         float3 rgb = color * alpha * (1.0 - glints) + glint_color * glints;
         alpha = alpha + glints * (1.0 - alpha);
         return float4(min(rgb, float3(alpha)), alpha);
