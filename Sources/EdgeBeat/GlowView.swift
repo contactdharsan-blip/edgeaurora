@@ -132,7 +132,8 @@ final class GlowView: NSView {
             strip.framebufferOnly = true
             strip.isOpaque = false
             strip.maximumDrawableCount = 2
-            strip.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+            // The shader writes P3-encoded colour so the panel's wider gamut is used.
+            strip.colorspace = CGColorSpace(name: CGColorSpace.displayP3)
             strip.actions = ["bounds": NSNull(), "position": NSNull(), "contents": NSNull()]
             rootLayer.addSublayer(strip)
         }

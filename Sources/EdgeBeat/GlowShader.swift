@@ -22,12 +22,20 @@ struct GlowUniforms {
     var tuning = SIMD4<Float>(1, 1, 0, 0)
     /// age (seconds), strength; strength 0 marks an empty slot
     var shocks: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
+    /// Palette as OKLCH: lightness, chroma, hue (radians), 1 — see AuroraColor.
     var colors: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
         = (.zero, .zero, .zero, .zero, .zero)
     /// 32 band values, four per element
     var bands: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>,
                 SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
         = (.zero, .zero, .zero, .zero, .zero, .zero, .zero, .zero)
+
+    /// previous palette's colour count, crossfade progress (1 = current palette
+    /// only), unused, unused
+    var blend = SIMD4<Float>(0, 1, 0, 0)
+    /// The palette being faded out after a track change, OKLCH like `colors`.
+    var previousColors: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
+        = (.zero, .zero, .zero, .zero, .zero)
 
     static let maximumShocks = 4
     static let maximumColors = 5
@@ -50,6 +58,17 @@ struct GlowUniforms {
         case 2: colors.2 = value
         case 3: colors.3 = value
         case 4: colors.4 = value
+        default: break
+        }
+    }
+
+    mutating func setPreviousColor(_ index: Int, _ value: SIMD4<Float>) {
+        switch index {
+        case 0: previousColors.0 = value
+        case 1: previousColors.1 = value
+        case 2: previousColors.2 = value
+        case 3: previousColors.3 = value
+        case 4: previousColors.4 = value
         default: break
         }
     }
@@ -85,6 +104,8 @@ enum GlowShader {
         float4 shocks[4];
         float4 colors[5];
         float4 bands[8];
+        float4 blend;
+        float4 prev_colors[5];
     };
 
     struct VertexOut {
@@ -174,23 +195,43 @@ enum GlowShader {
         c = (wb * c_bottom + wl * c_left + wt * c_top + wr * c_right) / (total * 2.0 * half_perimeter);
     }
 
-    static float3 palette(constant GlowUniforms &u, float t) {
-        int count = max(1, int(u.color.y));
-        float x = fract(t) * float(count);
-        int i = int(floor(x)) % count;
-        int j = (i + 1) % count;
-        return mix(u.colors[i].rgb, u.colors[j].rgb, x - floor(x));
+    // OKLCH blend along the shorter hue arc; a grey end borrows the other's
+    // hue. Mirrors AuroraColor.mixOKLCH.
+    static float3 lch_mix(float3 a, float3 b, float t) {
+        float ha = a.y < 0.02 ? b.z : a.z;
+        float hb = b.y < 0.02 ? a.z : b.z;
+        float dh = hb - ha;
+        dh -= 6.2831853 * round(dh / 6.2831853);
+        return float3(mix(a.x, b.x, t), mix(a.y, b.y, t), ha + dh * t);
     }
 
-    // Luminous version of a colour: the hue is kept at full value and strong
-    // saturation, lifted toward white so it glows rather than sits dark.
-    // Near-greys stay grey.
-    static float3 vivid(float3 c) {
-        float high = max(c.r, max(c.g, c.b));
-        float low = min(c.r, min(c.g, c.b));
-        if (high - low < 0.05) { return float3(min(1.0, high * 1.25)); }
-        float3 shape = (c - low) / (high - low);
-        return mix(float3(1.0), shape, 0.72);
+    static float3 palette(constant float4 *colors, float count, float t) {
+        int n = max(1, int(count));
+        float x = fract(t) * float(n);
+        int i = int(floor(x)) % n;
+        int j = (i + 1) % n;
+        return lch_mix(colors[i].xyz, colors[j].xyz, x - floor(x));
+    }
+
+    // OKLCH -> linear sRGB (Ottosson) -> linear Display P3 -> P3-encoded.
+    // Chroma beyond sRGB lands inside the panel's P3 gamut; anything beyond
+    // P3 is clipped per channel.
+    static float3 lch_to_p3(float3 lch) {
+        float3 lab = float3(lch.x, lch.y * cos(lch.z), lch.y * sin(lch.z));
+        float l_ = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+        float m_ = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+        float s_ = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+        float l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
+        float3 srgb = float3(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                             -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                             -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
+        float3 p3 = float3(0.8224621 * srgb.r + 0.1775380 * srgb.g,
+                           0.0331941 * srgb.r + 0.9668058 * srgb.g,
+                           0.0170827 * srgb.r + 0.0723974 * srgb.g + 0.9105199 * srgb.b);
+        p3 = clamp(p3, 0.0, 1.0);
+        float3 low = p3 * 12.92;
+        float3 high = 1.055 * pow(p3, float3(1.0 / 2.4)) - 0.055;
+        return select(high, low, p3 <= 0.0031308);
     }
 
     static float hash(float n) {
@@ -372,9 +413,16 @@ enum GlowShader {
         // Only about a third of the palette spans the rim at once, so colours
         // change in long, gradual sweeps rather than bands.
         float hue = s * 0.32 + u.color.x;
-        float3 color = mix(vivid(palette(u, hue)), vivid(palette(u, hue + 0.08)), depth);
-        // The ribbon's body sits a little deeper than its lines; rays past the
-        // end line keep the end line's colour.
+        float3 lch = lch_mix(palette(u.colors, u.color.y, hue),
+                             palette(u.colors, u.color.y, hue + 0.08), depth);
+        // After a track change the old palette fades out over about 1.5 s,
+        // blended in OKLCH so the handover never passes through grey.
+        if (u.blend.y < 1.0) {
+            float3 previous = lch_mix(palette(u.prev_colors, u.blend.x, hue),
+                                      palette(u.prev_colors, u.blend.x, hue + 0.08), depth);
+            lch = lch_mix(previous, lch, u.blend.y);
+        }
+        float3 color = lch_to_p3(lch);
         // Neon: white-hot cores on every line and ray inside their coloured
         // glow, and the whole ribbon lifted toward white.
         // The inner (end) line stays a gentle edge; the outer line and rays
@@ -405,6 +453,13 @@ enum GlowShader {
         float3 glint_color = mix(color, float3(1.0), 0.4);
         float3 rgb = color * alpha * (1.0 - glints) + glint_color * glints;
         alpha = alpha + glints * (1.0 - alpha);
+
+        // Interleaved-gradient-noise dither, one 8-bit step wide, so the long
+        // fades do not band. Fully clear pixels stay exactly clear.
+        float noise = fract(52.9829189 * fract(dot(in.position.xy, float2(0.06711056, 0.00583715))));
+        float dither = (noise - 0.5) / 255.0 * step(1.0 / 255.0, alpha);
+        alpha = clamp(alpha + dither, 0.0, 1.0);
+        rgb = clamp(rgb + dither, 0.0, 1.0);
         return float4(min(rgb, float3(alpha)), alpha);
     }
     """

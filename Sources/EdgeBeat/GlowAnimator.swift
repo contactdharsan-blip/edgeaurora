@@ -34,6 +34,13 @@ final class GlowAnimator {
     private var lastFeatureTimestamp: TimeInterval?
     private var lastFeatureArrival: TimeInterval = 0
     private var frame = GlowUniforms()
+    private var paletteSource: [NSColor] = []
+    private var palette: [SIMD4<Float>] = []
+    private var previousPalette: [SIMD4<Float>] = []
+    private var paletteFade: Float = 1
+
+    /// Seconds a track change takes to hand the aurora from one palette to the next.
+    static let paletteCrossfadeSeconds: Float = 1.5
 
     init(preferences: AppPreferences, renderState: RenderState,
          featureSource: @escaping () -> AudioFeatures?) {
@@ -114,7 +121,7 @@ final class GlowAnimator {
             }
             if isNewEvent(features.dropSerial, since: &lastDropSerial) {
                 dropFlash = 1
-                pendingColorShift += 1 / Double(max(1, activeColors().count))
+                pendingColorShift += 1 / Double(max(1, palette.count))
             }
         } else if !playing {
             lastKickSerial = nil
@@ -141,6 +148,7 @@ final class GlowAnimator {
             flowHead -= floor(flowHead)
         }
 
+        updatePalette(dt)
         buildFrame()
     }
 
@@ -167,7 +175,7 @@ final class GlowAnimator {
                                                              : preferences.intensity),
                            presence)
         next.energy = SIMD4(level, kick, snare, treble)
-        let colors = activeColors()
+        let colors = palette
         next.color = SIMD4(Float(colorPhase), Float(colors.count),
                            preferences.waveFlowEnabled ? 1 : 0, Float(flowHead))
         next.flow = SIMD4(Float(0.08 + preferences.waveLength * 0.44),
@@ -178,6 +186,10 @@ final class GlowAnimator {
         for (index, shock) in shocks.enumerated() {
             next.setShock(index, age: shock.age, strength: shock.strength)
         }
+        next.blend = SIMD4(Float(previousPalette.count), smoothstepFade(paletteFade), 0, 0)
+        for (index, color) in previousPalette.enumerated() {
+            next.setPreviousColor(index, color)
+        }
         for (index, color) in colors.enumerated() {
             next.setColor(index, color)
         }
@@ -185,7 +197,7 @@ final class GlowAnimator {
         frame = next
     }
 
-    private func activeColors() -> [SIMD4<Float>] {
+    private func sourceColors() -> [NSColor] {
         let colors: [NSColor]
         switch preferences.colorSource {
         case .album:
@@ -195,14 +207,34 @@ final class GlowAnimator {
                 ? [preferences.primaryColor, preferences.secondaryColor]
                 : [preferences.primaryColor]
         }
-        return colors.prefix(GlowUniforms.maximumColors).map(Self.components)
+        return Array(colors.prefix(GlowUniforms.maximumColors))
     }
 
-    private static func components(_ color: NSColor) -> SIMD4<Float> {
-        guard let rgb = color.usingColorSpace(.sRGB) else { return SIMD4(1, 1, 1, 1) }
-        return SIMD4(Float(rgb.redComponent), Float(rgb.greenComponent),
-                     Float(rgb.blueComponent), 1)
+    /// Converts the palette to OKLCH only when it changes, and starts a
+    /// crossfade from the old one. The first palette appears without a fade.
+    private func updatePalette(_ dt: Float) {
+        let source = sourceColors()
+        if source != paletteSource {
+            let next = source.map(AuroraColor.auroraLCH)
+            if palette.isEmpty {
+                paletteFade = 1
+            } else {
+                previousPalette = palette
+                paletteFade = 0
+            }
+            paletteSource = source
+            palette = next
+        }
+        if paletteFade < 1 {
+            paletteFade = min(1, paletteFade + dt / Self.paletteCrossfadeSeconds)
+            if paletteFade >= 1 { previousPalette = [] }
+        }
     }
+
+    private func smoothstepFade(_ t: Float) -> Float {
+        t * t * (3 - 2 * t)
+    }
+
 
     /// A reading that has not changed for half a second belongs to audio that
     /// has stopped. Staleness is judged by when a new reading last arrived, not

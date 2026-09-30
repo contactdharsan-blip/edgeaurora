@@ -98,7 +98,7 @@ final class GlowSnapshotTests: XCTestCase {
         let provider = try XCTUnwrap(CGDataProvider(data: Data(composite) as CFData))
         let cgImage = try XCTUnwrap(CGImage(
             width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-            bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.displayP3)!,
             bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
             provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
         let data = try XCTUnwrap(NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]))
@@ -267,6 +267,48 @@ final class GlowSnapshotTests: XCTestCase {
         let calm = try kickSwing(reactivity: 0)
         let lively = try kickSwing(reactivity: 1)
         XCTAssertGreaterThan(lively, calm * 1.5 + 0.5, "lively \(lively) vs calm \(calm)")
+    }
+
+    func testComplementaryGradientNeverTurnsGrey() throws {
+        // Blue and yellow are complementary: blended straight, the gradient
+        // between them passes through grey. Blended in OKLCH it must not.
+        let image = try steadyScene(band: 0.6, level: 0.6, name: "13-blue-yellow") {
+            $0.colorSource = .custom
+            $0.colorMode = .gradient
+            $0.primaryColor = NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)
+            $0.secondaryColor = NSColor(srgbRed: 1, green: 1, blue: 0, alpha: 1)
+        }
+        var saturations: [Double] = []
+        for index in stride(from: 0, to: image.count, by: 4 * 7) {
+            let a = Double(image[index + 3]) / 255
+            guard a > 0.3 else { continue }
+            let rgb = (0..<3).map { Double(image[index + $0]) / 255 / a }
+            let high = rgb.max()!, low = rgb.min()!
+            saturations.append(high > 0 ? (high - low) / high : 0)
+        }
+        XCTAssertGreaterThan(saturations.count, 1000)
+        let tenth = saturations.sorted()[saturations.count / 10]
+        XCTAssertGreaterThan(tenth, 0.25, "10th-percentile saturation \(tenth)")
+    }
+
+    func testTrackChangeCrossfadesThePalette() throws {
+        let harness = Harness()
+        harness.preferences.colorSource = .custom
+        harness.preferences.colorMode = .single
+        harness.preferences.primaryColor = .systemRed
+        harness.run(seconds: 0.5)
+        func fade() -> Float {
+            harness.animator.uniforms(screenSize: size, strip: .zero, notch: nil).blend.y
+        }
+        XCTAssertEqual(fade(), 1, "the first palette appears without a fade")
+        harness.preferences.primaryColor = .systemBlue
+        harness.run(seconds: 0.1)
+        XCTAssertLessThan(fade(), 0.2)
+        harness.run(seconds: 0.65)
+        XCTAssertGreaterThan(fade(), 0.3)
+        XCTAssertLessThan(fade(), 0.8)
+        harness.run(seconds: 0.9)
+        XCTAssertEqual(fade(), 1)
     }
 
     func testShockwaveClimbsTheSides() throws {
