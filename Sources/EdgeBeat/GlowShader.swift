@@ -310,7 +310,9 @@ enum GlowShader {
         float streak = past > 0.0 && ray_length > 0.0
             ? ray * pow(clamp(1.0 - past / ray_length, 0.0, 1.0), 1.6)
             : 0.0;
-        float fill = inside * (0.5 + 0.08 * depth) * rays;
+        // Opacity falls steeply across the band: strong at the screen edge,
+        // nearly clear by the inner edge, which then barely needs a line.
+        float fill = inside * mix(0.9, 0.06, pow(depth, 0.75)) * rays;
 
         // Neon halos: every crisp line and ray carries a soft glow around its
         // sharp core, wider than the core and fainter.
@@ -324,7 +326,9 @@ enum GlowShader {
             : 0.0;
         // Bloom: the whole ribbon breathes light a little way past its end line.
         float bloom = past > 0.0 ? exp(-past / 16.0) : 0.0;
-        float halos = 0.35 * end_halo + 0.7 * start_halo + 0.65 * ray_halo + 0.2 * bloom;
+        // Rays and their halos past the inner edge continue the fade across
+        // the band instead of starting brighter than the fill beside them.
+        float halos = 0.35 * end_halo + 0.7 * start_halo + 0.3 * ray_halo + 0.2 * bloom;
 
         float energy = (0.7 + 0.3 * band) * (1.0 + 0.2 * kick + 0.1 * snare + 0.15 * u.flow.z)
                      * (0.9 + 0.1 * level);
@@ -332,7 +336,7 @@ enum GlowShader {
         // their halos carry the (deliberately gentle) swings.
         float body_energy = (0.85 + 0.15 * band) * (1.0 + 0.1 * kick + 0.1 * u.flow.z);
         float brightness = fill * body_energy
-                         + (0.3 * end_glow + 0.6 * start_glow + 0.8 * streak + halos) * energy
+                         + (0.3 * end_glow + 0.6 * start_glow + 0.35 * streak + halos) * energy
                          + 0.15 * shock * end_glow;
 
         float mask = 1.0;
