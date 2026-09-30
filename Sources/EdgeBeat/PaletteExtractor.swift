@@ -5,7 +5,9 @@ struct GlowPalette {
     var secondary: NSColor
     var accent: NSColor
     var background: NSColor
-    /// Three to five colours ordered by how much of the artwork they hold.
+    /// Three to five colours: the one the artwork holds most of first, then
+    /// the rest walking round the hue circle from it, so the gradient sweeps
+    /// instead of jumping.
     /// `primary`, `secondary` and `accent` are `colors[0]`, `[1]` and `[2]`.
     var colors: [NSColor]
 
@@ -27,9 +29,38 @@ struct GlowPalette {
 }
 
 enum PaletteExtractor {
+    /// Hues the glow falls back to when the artwork has no colour of its own.
+    /// Green, teal and violet: an aurora, rather than the grey that a
+    /// near-greyscale cover would otherwise hand the renderer.
+    private static let auroraHues: [CGFloat] = [150.0 / 360, 185.0 / 360, 265.0 / 360]
+    private static let auroraSaturation: CGFloat = 0.7
+    private static let auroraBrightness: CGFloat = 0.92
+
+    /// A colour counts as chromatic here if the renderer would see it as a
+    /// colour at all; below this it draws grey on purpose.
+    private static let chromaticSaturation: CGFloat = 0.2
+
+    private static func auroraColors() -> [NSColor] {
+        auroraHues.map {
+            NSColor(calibratedHue: $0, saturation: auroraSaturation,
+                    brightness: auroraBrightness, alpha: 1)
+        }
+    }
+
+    /// Used when there are no pixels to read a background from, so it keeps
+    /// the one the shipped palette uses rather than inventing another.
+    private static func auroraPalette(background: NSColor = GlowPalette.default.background) -> GlowPalette {
+        let colors = auroraColors()
+        return GlowPalette(primary: colors[0], secondary: colors[1], accent: colors[2],
+                           background: background, colors: colors)
+    }
+
     static func extract(from image: NSImage?) -> GlowPalette {
-        guard let image, let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-            return .default
+        // No artwork at all is not a colour problem, so it keeps the palette
+        // the app ships with.
+        guard let image else { return .default }
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return auroraPalette()
         }
 
         let size = 64
@@ -42,11 +73,17 @@ enum PaletteExtractor {
             bytesPerRow: size * 4,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return .default }
+        ) else { return auroraPalette() }
         context.interpolationQuality = .low
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: size, height: size))
 
         var buckets = Array(repeating: (weight: 0.0, r: 0.0, g: 0.0, b: 0.0), count: 24)
+        // A second, plainer tally: how many pixels are unmistakably coloured,
+        // by hue. It is only read when the ordinary selection comes out grey,
+        // and it counts pixels rather than weighting them, so a small patch of
+        // real colour can be found under a cover that is otherwise grey.
+        var vividBuckets = Array(repeating: (count: 0.0, hue: 0.0), count: 24)
+        var sampled = 0.0
         var averageR = 0.0, averageG = 0.0, averageB = 0.0, averageWeight = 0.0
         var darkR = 0.0, darkG = 0.0, darkB = 0.0, darkCount = 0.0
         for index in stride(from: 0, to: pixels.count, by: 4) {
@@ -57,6 +94,13 @@ enum PaletteExtractor {
             let minValue = min(r, g, b)
             let brightness = maxValue
             let saturation = maxValue == 0 ? 0 : (maxValue - minValue) / maxValue
+            sampled += 1
+            if saturation > 0.25, brightness > 0.15 {
+                let vividHue = hsvHue(red: r, green: g, blue: b, max: maxValue, min: minValue)
+                let vividBucket = min(23, max(0, Int(vividHue * 24)))
+                vividBuckets[vividBucket].count += 1
+                vividBuckets[vividBucket].hue += vividHue
+            }
             if brightness < 0.22 {
                 darkR += r; darkG += g; darkB += b; darkCount += 1
             }
@@ -94,25 +138,87 @@ enum PaletteExtractor {
             if selected.count >= 3, buckets[index].weight < topWeight * 0.08 { break }
             selected.append(index)
         }
-        let extracted = selected.map { index -> NSColor in
+        let rawSelected = selected.map { index -> NSColor in
             let bucket = buckets[index]
-            let color = NSColor(calibratedRed: bucket.r / bucket.weight,
-                                green: bucket.g / bucket.weight,
-                                blue: bucket.b / bucket.weight, alpha: 1)
-            return glowColor(from: color)
+            return NSColor(calibratedRed: bucket.r / bucket.weight,
+                           green: bucket.g / bucket.weight,
+                           blue: bucket.b / bucket.weight, alpha: 1)
         }
-        let averageColor = averageWeight > 0
-            ? glowColor(from: NSColor(calibratedRed: averageR / averageWeight,
-                                      green: averageG / averageWeight,
-                                      blue: averageB / averageWeight, alpha: 1))
-            : .white
+        let extracted = rawSelected.map { glowColor(from: $0) }
+        let rawAverage = averageWeight > 0
+            ? NSColor(calibratedRed: averageR / averageWeight,
+                      green: averageG / averageWeight,
+                      blue: averageB / averageWeight, alpha: 1)
+            : NSColor.white
+        let averageColor = averageWeight > 0 ? glowColor(from: rawAverage) : .white
         let seed = extracted.first ?? averageColor
-        let colors = pad(extracted, using: seed)
+        let chosen = pad(extracted, using: seed)
         let background = darkCount > 0
             ? NSColor(calibratedRed: darkR / darkCount, green: darkG / darkCount, blue: darkB / darkCount, alpha: 1)
             : .black
+
+        // The aurora is meant to be colourful. If the ordinary selection found
+        // nothing that is actually a colour, look again for the strongest
+        // patch of real colour on the cover and build around it; failing that,
+        // use the aurora hues rather than ship a grey glow.
+        //
+        // This asks the colours as they came off the artwork, not the ones
+        // `glowColor` has already lifted to saturation 0.42: after that lift
+        // every selected colour looks chromatic and a grey cover could never
+        // be recognised as one.
+        let judged = rawSelected.isEmpty ? [rawAverage] : rawSelected
+        let colors: [NSColor]
+        if judged.allSatisfy({ (rgbComponents(of: $0)?.saturation ?? 0) < chromaticSaturation }) {
+            if let hue = dominantVividHue(in: vividBuckets, sampled: sampled) {
+                colors = palette(around: hue)
+            } else {
+                colors = auroraColors()
+            }
+        } else {
+            colors = orderedByHue(chosen)
+        }
         return GlowPalette(primary: colors[0], secondary: colors[1], accent: colors[2],
                            background: background, colors: colors)
+    }
+
+    /// The hue of the biggest unmistakably coloured cluster, if one holds at
+    /// least 0.3% of the sampled pixels. Below that it is a stray pixel or a
+    /// compression artefact, not a colour the cover has.
+    private static func dominantVividHue(in buckets: [(count: Double, hue: Double)],
+                                         sampled: Double) -> CGFloat? {
+        guard sampled > 0 else { return nil }
+        let minimum = sampled * 0.003
+        guard let best = buckets.indices
+            .filter({ buckets[$0].count >= minimum })
+            .max(by: { buckets[$0].count < buckets[$1].count }) else { return nil }
+        return CGFloat(buckets[best].hue / buckets[best].count)
+    }
+
+    /// Three colours around one hue: the seed and a neighbour either side,
+    /// saturated and bright enough to read as an aurora, in increasing hue
+    /// from the seed.
+    private static func palette(around hue: CGFloat) -> [NSColor] {
+        let spread: CGFloat = 30.0 / 360
+        return [hue, hue + spread, hue - spread].map { candidate in
+            var wrapped = candidate.truncatingRemainder(dividingBy: 1)
+            if wrapped < 0 { wrapped += 1 }
+            return NSColor(calibratedHue: wrapped, saturation: 0.6, brightness: 0.82, alpha: 1)
+        }
+    }
+
+    /// Keeps the heaviest colour first and walks the rest round the hue circle
+    /// from it, so neighbouring entries are neighbours in hue and the gradient
+    /// sweeps instead of jumping.
+    private static func orderedByHue(_ colors: [NSColor]) -> [NSColor] {
+        guard colors.count > 2, let primary = colors.first,
+              let base = rgbComponents(of: primary)?.hue else { return colors }
+        func offset(_ color: NSColor) -> CGFloat {
+            guard let hue = rgbComponents(of: color)?.hue else { return 0 }
+            var distance = (hue - base).truncatingRemainder(dividingBy: 1)
+            if distance < 0 { distance += 1 }
+            return distance
+        }
+        return [primary] + colors.dropFirst().sorted { offset($0) < offset($1) }
     }
 
     /// Keeps whatever was extracted, in weight order, and invents only what is
