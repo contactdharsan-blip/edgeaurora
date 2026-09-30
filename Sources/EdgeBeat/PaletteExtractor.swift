@@ -5,6 +5,18 @@ struct GlowPalette {
     var secondary: NSColor
     var accent: NSColor
     var background: NSColor
+    /// Three to five colours ordered by how much of the artwork they hold.
+    /// `primary`, `secondary` and `accent` are `colors[0]`, `[1]` and `[2]`.
+    var colors: [NSColor]
+
+    init(primary: NSColor, secondary: NSColor, accent: NSColor, background: NSColor,
+         colors: [NSColor]? = nil) {
+        self.primary = primary
+        self.secondary = secondary
+        self.accent = accent
+        self.background = background
+        self.colors = colors ?? [primary, secondary, accent]
+    }
 
     static let `default` = GlowPalette(
         primary: NSColor(calibratedRed: 0.35, green: 0.65, blue: 1, alpha: 1),
@@ -63,11 +75,27 @@ enum PaletteExtractor {
             buckets[bucket].b += b * weight
         }
 
-        let ranked = buckets.indices.sorted { buckets[$0].weight > buckets[$1].weight }
-        let selected = Array(ranked.prefix(3))
-        let extracted = selected.compactMap { index -> NSColor? in
+        let ranked = buckets.indices
+            .filter { buckets[$0].weight > 0 }
+            .sorted { buckets[$0].weight > buckets[$1].weight }
+        let topWeight = ranked.first.map { buckets[$0].weight } ?? 0
+        var selected: [Int] = []
+        for index in ranked {
+            guard selected.count < 5 else { break }
+            // A hue one bucket away from one already taken is the same colour
+            // with a different name, and the glow needs colours that read apart.
+            let isNeighbour = selected.contains { chosen in
+                let distance = abs(chosen - index)
+                return min(distance, buckets.count - distance) <= 1
+            }
+            guard !isNeighbour else { continue }
+            // The fourth and fifth only earn a place if the artwork really
+            // holds them, rather than a stray highlight.
+            if selected.count >= 3, buckets[index].weight < topWeight * 0.08 { break }
+            selected.append(index)
+        }
+        let extracted = selected.map { index -> NSColor in
             let bucket = buckets[index]
-            guard bucket.weight > 0 else { return nil }
             let color = NSColor(calibratedRed: bucket.r / bucket.weight,
                                 green: bucket.g / bucket.weight,
                                 blue: bucket.b / bucket.weight, alpha: 1)
@@ -83,11 +111,14 @@ enum PaletteExtractor {
         let background = darkCount > 0
             ? NSColor(calibratedRed: darkR / darkCount, green: darkG / darkCount, blue: darkB / darkCount, alpha: 1)
             : .black
-        return GlowPalette(primary: colors[0], secondary: colors[1], accent: colors[2], background: background)
+        return GlowPalette(primary: colors[0], secondary: colors[1], accent: colors[2],
+                           background: background, colors: colors)
     }
 
+    /// Keeps whatever was extracted, in weight order, and invents only what is
+    /// missing from the first three.
     private static func pad(_ colors: [NSColor], using seed: NSColor) -> [NSColor] {
-        var result = Array(colors.prefix(3))
+        var result = Array(colors.prefix(5))
         guard let seedRGB = rgbComponents(of: seed) else {
             while result.count < 3 { result.append(seed) }
             return result
