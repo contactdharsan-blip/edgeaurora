@@ -110,6 +110,10 @@ final class AppPreferences: ObservableObject {
     @Published var smoke: Double {
         didSet { defaults.set(smoke, forKey: Keys.smoke) }
     }
+    /// Soft glow around the aurora's lines and rays; 0.5 is the tuned default.
+    @Published var halo: Double {
+        didSet { defaults.set(halo, forKey: Keys.halo) }
+    }
     @Published var displayTarget: DisplayTarget {
         didSet { defaults.set(displayTarget.rawValue, forKey: Keys.displayTarget) }
     }
@@ -148,6 +152,7 @@ final class AppPreferences: ObservableObject {
         reactivity = Self.loadUnitValue(defaults: defaults, key: Keys.reactivity, fallback: 0.5)
         rayLength = Self.loadUnitValue(defaults: defaults, key: Keys.rayLength, fallback: 0.5)
         smoke = Self.loadUnitValue(defaults: defaults, key: Keys.smoke, fallback: 0.3)
+        halo = Self.loadUnitValue(defaults: defaults, key: Keys.halo, fallback: 0.5)
         displayTarget = DisplayTarget(rawValue: defaults.string(forKey: Keys.displayTarget) ?? "") ?? .builtIn
         nowPlayingCardEnabled = defaults.object(forKey: Keys.nowPlayingCardEnabled) as? Bool ?? false
         playerSource = PlayerSource(rawValue: defaults.string(forKey: Keys.playerSource) ?? "") ?? .automatic
@@ -163,6 +168,13 @@ final class AppPreferences: ObservableObject {
     /// midpoint, so the default slider position keeps the tuned look.
     static func tuningMultiplier(_ value: Double) -> Double {
         pow(4, clampedUnitValue(value, fallback: 0.5) - 0.5)
+    }
+
+    /// Maps the Halo slider to a glow multiplier: 0 at the left end (crisp
+    /// lines, no glow), exactly 1 at the midpoint, 2.2 at the right end.
+    static func haloMultiplier(_ value: Double) -> Double {
+        let v = clampedUnitValue(value, fallback: 0.5)
+        return v <= 0.5 ? v * 2 : 1 + (v - 0.5) * 2.4
     }
 
     /// Reads a user-controlled slider value defensively. UserDefaults can be
@@ -217,6 +229,7 @@ final class AppPreferences: ObservableObject {
         static let reactivity = "aurora.reactivity"
         static let rayLength = "aurora.rayLength"
         static let smoke = "aurora.smoke"
+        static let halo = "aurora.halo"
         static let nowPlayingCardEnabled = "nowPlaying.cardEnabled"
         static let playerSource = "player.source"
     }

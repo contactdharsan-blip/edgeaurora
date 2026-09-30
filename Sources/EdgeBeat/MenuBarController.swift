@@ -71,6 +71,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var reactivityValueLabel: NSTextField?
     private var rayLengthValueLabel: NSTextField?
     private var smokeValueLabel: NSTextField?
+    private var haloValueLabel: NSTextField?
     private var frostedGlassItem: NSMenuItem!
     private var colorSourceItems: [ColorSource: NSMenuItem] = [:]
     private var colorModeItems: [CustomColorMode: NSMenuItem] = [:]
@@ -310,6 +311,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         frostedGlassItem = commandItem("Frosted Glass", action: #selector(toggleFrostedGlass(_:)))
         submenu.addItem(frostedGlassItem)
         submenu.addItem(.separator())
+        submenu.addItem(makeSliderItem(title: "Halo", symbol: "sun.haze",
+                                       value: preferences.halo,
+                                       action: #selector(haloChanged(_:)),
+                                       valueLabel: &haloValueLabel))
         submenu.addItem(makeSliderItem(title: "Reactivity", symbol: "waveform.path.ecg",
                                        value: preferences.reactivity,
                                        action: #selector(reactivityChanged(_:)),
@@ -591,6 +596,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func rayLengthChanged(_ sender: NSSlider) {
         preferences.rayLength = sender.doubleValue
         rayLengthValueLabel?.stringValue = "\(Int((sender.doubleValue * 100).rounded()))%"
+    }
+
+    @objc private func haloChanged(_ sender: NSSlider) {
+        preferences.halo = sender.doubleValue
+        haloValueLabel?.stringValue = "\(Int((sender.doubleValue * 100).rounded()))%"
     }
 
     @objc private func smokeChanged(_ sender: NSSlider) {

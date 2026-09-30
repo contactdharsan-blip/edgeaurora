@@ -37,6 +37,8 @@ struct GlowUniforms {
     /// The palette being faded out after a track change, OKLCH like `colors`.
     var previousColors: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
         = (.zero, .zero, .zero, .zero, .zero)
+    /// halo multiplier (1 = tuned default), unused, unused, unused
+    var look = SIMD4<Float>(1, 0, 0, 0)
 
     static let maximumShocks = 4
     static let maximumColors = 5
@@ -107,6 +109,7 @@ enum GlowShader {
         float4 bands[8];
         float4 blend;
         float4 prev_colors[5];
+        float4 look;
     };
 
     struct VertexOut {
@@ -406,19 +409,25 @@ enum GlowShader {
         // sharp core, wider than the core and fainter.
         // Halo and bloom widths shrink with the strip, so a low Thickness
         // setting never cuts them off at the strip's inner edge.
-        float end_halo_offset = (d - end_line) / min(18.0, strip_depth * 0.2);
-        float start_halo_offset = (d - start_line) / 16.0;
+        // The Halo slider scales these glows' strength and, more gently,
+        // their width; 1 is the tuned default, 0 leaves crisp lines only.
+        float halo_gain = u.look.x;
+        float halo_width = 0.6 + 0.4 * halo_gain;
+        float end_halo_offset = (d - end_line)
+            / min(min(18.0, strip_depth * 0.2) * halo_width, strip_depth * 0.25);
+        float start_halo_offset = (d - start_line) / min(16.0 * halo_width, strip_depth * 0.25);
         float end_halo = exp(-end_halo_offset * end_halo_offset);
         float start_halo = exp(-start_halo_offset * start_halo_offset);
-        float ray_halo_length = min(ray_length * 1.5 + 4.0 + 8.0 * drive, room);
+        float ray_halo_length = min((ray_length * 1.5 + 4.0 + 8.0 * drive) * halo_width, room);
         float ray_halo = past > 0.0 && ray_halo_length > 0.0
             ? ray_soft * pow(clamp(1.0 - past / ray_halo_length, 0.0, 1.0), 2.0)
             : 0.0;
         // Bloom: the whole ribbon breathes light a little way past its end line.
-        float bloom = past > 0.0 ? exp(-past / min(16.0, strip_depth * 0.18)) : 0.0;
+        float bloom = past > 0.0
+            ? exp(-past / min(min(16.0, strip_depth * 0.18) * halo_width, strip_depth * 0.22)) : 0.0;
         // Rays and their halos past the inner edge continue the fade across
         // the band instead of starting brighter than the fill beside them.
-        float halos = 0.35 * end_halo + 0.7 * start_halo + 0.3 * ray_halo + 0.2 * bloom;
+        float halos = (0.35 * end_halo + 0.7 * start_halo + 0.3 * ray_halo + 0.2 * bloom) * halo_gain;
 
         float energy = (0.7 + 0.3 * band) * (1.0 + (0.2 * kick + 0.1 * snare) * react + 0.15 * u.flow.z)
                      * (0.9 + 0.1 * level);

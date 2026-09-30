@@ -203,6 +203,9 @@ final class EdgeBeatTests: XCTestCase {
         XCTAssertEqual(AppPreferences(defaults: defaults).reactivity, 0.5)
         XCTAssertEqual(AppPreferences.tuningMultiplier(0), 0.5, accuracy: 1e-9)
         XCTAssertEqual(AppPreferences.tuningMultiplier(1), 2, accuracy: 1e-9)
+        XCTAssertEqual(first.halo, 0.5)
+        XCTAssertEqual(AppPreferences.haloMultiplier(0), 0, accuracy: 1e-9)
+        XCTAssertEqual(AppPreferences.haloMultiplier(1), 2.2, accuracy: 1e-9)
     }
 
     private func makeTrack(title: String,

@@ -290,7 +290,9 @@ final class GlowSnapshotTests: XCTestCase {
         let explicit = try steadyScene(band: 0.6, level: 0.6, name: "12-tuning-explicit") {
             $0.reactivity = 0.5
             $0.rayLength = 0.5
+            $0.halo = 0.5
         }
+        XCTAssertEqual(AppPreferences.haloMultiplier(0.5), 1, accuracy: 1e-9)
         XCTAssertEqual(defaults, explicit)
     }
 
@@ -419,6 +421,27 @@ final class GlowSnapshotTests: XCTestCase {
         let smoked = bottomBand(try steadyScene(band: 0.5, level: 0.5, name: "16-smoke-1") { $0.smoke = 1 })
         XCTAssertGreaterThan(smoked.alpha, clear.alpha * 1.15, "smoke adds shade")
         XCTAssertLessThan(smoked.luminance, clear.luminance, "and the shade is dark")
+    }
+
+    func testHaloSliderScalesTheGlow() throws {
+        // Total light past the ribbon's end line on the bottom edge: the halo
+        // and bloom live there. Smoke off so only glow is measured.
+        func glowPastTheRibbon(halo: Double, name: String) throws -> Double {
+            let image = try steadyScene(band: 0.5, level: 0.5, name: name) {
+                $0.halo = halo
+                $0.smoke = 0
+            }
+            var sum = 0.0
+            for y in (Int(size.height) - 140)..<(Int(size.height) - 45) {
+                for x in stride(from: 300, to: 1200, by: 4) { sum += alpha(image, x, y) }
+            }
+            return sum
+        }
+        let none = try glowPastTheRibbon(halo: 0, name: "17-halo-0")
+        let tuned = try glowPastTheRibbon(halo: 0.5, name: "18-halo-50")
+        let big = try glowPastTheRibbon(halo: 1, name: "19-halo-100")
+        XCTAssertLessThan(none, tuned * 0.7, "0% \(none) vs 50% \(tuned)")
+        XCTAssertGreaterThan(big, tuned * 1.3, "100% \(big) vs 50% \(tuned)")
     }
 
     func testShockwaveClimbsTheSides() throws {

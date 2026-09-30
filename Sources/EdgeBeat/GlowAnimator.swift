@@ -195,6 +195,7 @@ final class GlowAnimator {
         for (index, shock) in shocks.enumerated() {
             next.setShock(index, age: shock.age, strength: shock.strength)
         }
+        next.look = SIMD4(Float(AppPreferences.haloMultiplier(preferences.halo)), 0, 0, 0)
         next.blend = SIMD4(Float(previousPalette.count), smoothstepFade(paletteFade), 0, 0)
         for (index, color) in previousPalette.enumerated() {
             next.setPreviousColor(index, color)
