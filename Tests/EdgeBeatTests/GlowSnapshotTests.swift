@@ -214,30 +214,73 @@ final class GlowSnapshotTests: XCTestCase {
 
     private func steadyScene(band: Float, level: Double, name: String,
                              configure: (AppPreferences) -> Void = { _ in }) throws -> [UInt8] {
+        try steadyFrames(band: band, level: level, name: name, frames: 1, configure: configure)[0]
+    }
+
+    /// Several frames of a steady scene, 0.3 s apart. Rays live and die on
+    /// their own clocks, so a ray's length is its longest over a few frames.
+    private func steadyFrames(band: Float, level: Double, name: String, frames: Int,
+                              configure: (AppPreferences) -> Void = { _ in }) throws -> [[UInt8]] {
         let harness = Harness()
         configure(harness.preferences)
         harness.features.bands = bands { _ in band }
         harness.features.level = level
         harness.run(seconds: 2)
-        let image = try render(harness)
-        try save(image, name: name)
-        return image
+        var images: [[UInt8]] = []
+        for index in 0..<frames {
+            if index > 0 { harness.run(seconds: 0.3) }
+            images.append(try render(harness))
+        }
+        try save(images[0], name: name)
+        return images
+    }
+
+    /// Per column, the longest ray reach across frames.
+    private func rayReach(_ frames: [[UInt8]], threshold: Double, percentile: Double? = nil) -> Double {
+        let height = Int(size.height)
+        var reaches: [Int] = []
+        for x in stride(from: 200, to: Int(size.width) - 200, by: 3) {
+            var reach = 0
+            for image in frames {
+                for depth in stride(from: 200, through: reach, by: -1)
+                    where alpha(image, x, height - 1 - depth) > threshold {
+                    reach = max(reach, depth)
+                    break
+                }
+            }
+            reaches.append(reach)
+        }
+        guard let percentile else {
+            return Double(reaches.reduce(0, +)) / Double(reaches.count)
+        }
+        let sorted = reaches.sorted()
+        return Double(sorted[min(sorted.count - 1, Int(Double(sorted.count) * percentile))])
     }
 
     func testRaysReachFurtherWhenTheMusicIsLoud() throws {
-        let quiet = rayReach(try steadyScene(band: 0.15, level: 0.15, name: "07-rays-quiet"))
-        let loud = rayReach(try steadyScene(band: 0.9, level: 0.9, name: "08-rays-loud"))
+        // Smoke off: this measures rays, and the smoked glass would read as reach.
+        let quiet = rayReach(try steadyFrames(band: 0.15, level: 0.15, name: "07-rays-quiet",
+                                              frames: 6) { $0.smoke = 0 }, threshold: 0.03)
+        let loud = rayReach(try steadyFrames(band: 0.9, level: 0.9, name: "08-rays-loud",
+                                             frames: 6) { $0.smoke = 0 }, threshold: 0.03)
         XCTAssertGreaterThan(loud, quiet * 1.6, "loud \(loud) vs quiet \(quiet)")
     }
 
     func testRayLengthSliderScalesTheRays() throws {
-        let short = rayReach(try steadyScene(band: 0.7, level: 0.7, name: "09-raylength-0") {
-            $0.rayLength = 0
-        }, threshold: 0.12, percentile: 0.95)
-        let long = rayReach(try steadyScene(band: 0.7, level: 0.7, name: "10-raylength-1") {
-            $0.rayLength = 1
-        }, threshold: 0.12, percentile: 0.95)
-        XCTAssertGreaterThan(long, short * 1.4, "long \(long) vs short \(short)")
+        // How far rays stick out past the ribbon: the 95th-percentile reach
+        // (the rays) minus the median (the ribbon's own edge, since rays are
+        // sparse). Total reach would dilute the rays with the ribbon's depth.
+        func protrusion(rayLength: Double, name: String) throws -> Double {
+            let frames = try steadyFrames(band: 0.7, level: 0.7, name: name, frames: 6) {
+                $0.rayLength = rayLength
+                $0.smoke = 0
+            }
+            return rayReach(frames, threshold: 0.12, percentile: 0.95)
+                - rayReach(frames, threshold: 0.12, percentile: 0.5)
+        }
+        let short = try protrusion(rayLength: 0, name: "09-raylength-0")
+        let long = try protrusion(rayLength: 1, name: "10-raylength-1")
+        XCTAssertGreaterThan(long, short * 1.8, "long \(long) vs short \(short)")
     }
 
     func testDefaultTuningKeepsTheTunedLook() throws {
@@ -309,6 +352,73 @@ final class GlowSnapshotTests: XCTestCase {
         XCTAssertLessThan(fade(), 0.8)
         harness.run(seconds: 0.9)
         XCTAssertEqual(fade(), 1)
+    }
+
+    /// Mean ray reach down from the top edge, away from the notch.
+    private func topReach(_ image: [UInt8], threshold: Double = 0.08) -> Double {
+        var reaches: [Int] = []
+        for x in Array(stride(from: 200, to: 600, by: 3)) + Array(stride(from: 912, to: 1312, by: 3)) {
+            var reach = 0
+            for depth in stride(from: 200, through: 0, by: -1) where alpha(image, x, depth) > threshold {
+                reach = depth
+                break
+            }
+            reaches.append(reach)
+        }
+        return Double(reaches.reduce(0, +)) / Double(reaches.count)
+    }
+
+    func testSnareSparksRaysAcrossTheTop() throws {
+        let harness = Harness()
+        harness.preferences.smoke = 0
+        harness.features.bands = bands { _ in 0.6 }
+        harness.features.level = 0.6
+        harness.run(seconds: 1.5)
+        let before = try render(harness)
+        harness.features.snareSerial = 1
+        harness.features.snareStrength = 1
+        harness.run(seconds: 1.0 / 30.0)
+        let after = try render(harness)
+        try save(after, name: "14-snare-spark")
+        let topGain = topReach(after) - topReach(before)
+        let bottomGain = rayReach(after, threshold: 0.08) - rayReach(before, threshold: 0.08)
+        XCTAssertGreaterThan(topGain, 2, "top \(topGain)")
+        XCTAssertGreaterThan(topGain, bottomGain * 2, "top \(topGain) vs bottom \(bottomGain)")
+    }
+
+    func testQuietPassagesBreatheAndLoudOnesDoNot() {
+        let quiet = Harness()
+        quiet.features.bands = bands { _ in 0.1 }
+        quiet.features.level = 0.1
+        quiet.run(seconds: 10)
+        XCTAssertGreaterThan(quiet.animator.quietnessLevel, 0.7)
+        let loud = Harness()
+        loud.features.bands = bands { _ in 0.9 }
+        loud.features.level = 0.9
+        loud.run(seconds: 10)
+        XCTAssertLessThan(loud.animator.quietnessLevel, 0.05)
+    }
+
+    func testSmokeDarkensUnderTheBandAndZeroTurnsItOff() throws {
+        func bottomBand(_ image: [UInt8]) -> (alpha: Double, luminance: Double) {
+            var alphaSum = 0.0, lumaSum = 0.0, count = 0.0
+            for y in (Int(size.height) - 70)..<Int(size.height) {
+                for x in stride(from: 300, to: 1200, by: 5) {
+                    let index = (y * Int(size.width) + x) * 4
+                    let a = Double(image[index + 3]) / 255
+                    alphaSum += a
+                    if a > 0.01 {
+                        lumaSum += (Double(image[index]) + Double(image[index + 1]) + Double(image[index + 2])) / 765 / a
+                        count += 1
+                    }
+                }
+            }
+            return (alphaSum, count > 0 ? lumaSum / count : 0)
+        }
+        let clear = bottomBand(try steadyScene(band: 0.5, level: 0.5, name: "15-smoke-0") { $0.smoke = 0 })
+        let smoked = bottomBand(try steadyScene(band: 0.5, level: 0.5, name: "16-smoke-1") { $0.smoke = 1 })
+        XCTAssertGreaterThan(smoked.alpha, clear.alpha * 1.15, "smoke adds shade")
+        XCTAssertLessThan(smoked.luminance, clear.luminance, "and the shade is dark")
     }
 
     func testShockwaveClimbsTheSides() throws {

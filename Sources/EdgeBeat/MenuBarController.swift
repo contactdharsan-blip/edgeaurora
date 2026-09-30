@@ -70,6 +70,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var waveSpeedValueLabel: NSTextField?
     private var reactivityValueLabel: NSTextField?
     private var rayLengthValueLabel: NSTextField?
+    private var smokeValueLabel: NSTextField?
     private var frostedGlassItem: NSMenuItem!
     private var colorSourceItems: [ColorSource: NSMenuItem] = [:]
     private var colorModeItems: [CustomColorMode: NSMenuItem] = [:]
@@ -317,6 +318,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                                        value: preferences.rayLength,
                                        action: #selector(rayLengthChanged(_:)),
                                        valueLabel: &rayLengthValueLabel))
+        submenu.addItem(makeSliderItem(title: "Smoke", symbol: "smoke",
+                                       value: preferences.smoke,
+                                       action: #selector(smokeChanged(_:)),
+                                       valueLabel: &smokeValueLabel))
 
         parent.submenu = submenu
         return parent
@@ -586,6 +591,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func rayLengthChanged(_ sender: NSSlider) {
         preferences.rayLength = sender.doubleValue
         rayLengthValueLabel?.stringValue = "\(Int((sender.doubleValue * 100).rounded()))%"
+    }
+
+    @objc private func smokeChanged(_ sender: NSSlider) {
+        preferences.smoke = sender.doubleValue
+        smokeValueLabel?.stringValue = "\(Int((sender.doubleValue * 100).rounded()))%"
     }
 
     @objc private func toggleWaveFlow(_ sender: NSMenuItem) {

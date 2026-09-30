@@ -106,6 +106,10 @@ final class AppPreferences: ObservableObject {
     @Published var rayLength: Double {
         didSet { defaults.set(rayLength, forKey: Keys.rayLength) }
     }
+    /// Album-tinted smoked glass under the band; 0 turns it off.
+    @Published var smoke: Double {
+        didSet { defaults.set(smoke, forKey: Keys.smoke) }
+    }
     @Published var displayTarget: DisplayTarget {
         didSet { defaults.set(displayTarget.rawValue, forKey: Keys.displayTarget) }
     }
@@ -143,6 +147,7 @@ final class AppPreferences: ObservableObject {
         frostedGlass = defaults.object(forKey: Keys.frostedGlass) as? Bool ?? true
         reactivity = Self.loadUnitValue(defaults: defaults, key: Keys.reactivity, fallback: 0.5)
         rayLength = Self.loadUnitValue(defaults: defaults, key: Keys.rayLength, fallback: 0.5)
+        smoke = Self.loadUnitValue(defaults: defaults, key: Keys.smoke, fallback: 0.3)
         displayTarget = DisplayTarget(rawValue: defaults.string(forKey: Keys.displayTarget) ?? "") ?? .builtIn
         nowPlayingCardEnabled = defaults.object(forKey: Keys.nowPlayingCardEnabled) as? Bool ?? false
         playerSource = PlayerSource(rawValue: defaults.string(forKey: Keys.playerSource) ?? "") ?? .automatic
@@ -211,6 +216,7 @@ final class AppPreferences: ObservableObject {
         static let frostedGlass = "aurora.frostedGlass"
         static let reactivity = "aurora.reactivity"
         static let rayLength = "aurora.rayLength"
+        static let smoke = "aurora.smoke"
         static let nowPlayingCardEnabled = "nowPlaying.cardEnabled"
         static let playerSource = "player.source"
     }

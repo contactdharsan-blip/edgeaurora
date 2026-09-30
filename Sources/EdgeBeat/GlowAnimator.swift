@@ -23,6 +23,7 @@ final class GlowAnimator {
     private var snare: Float = 0
     private var dropFlash: Float = 0
     private var presence: Float = 0
+    private var quietness: Float = 0
     private var colorPhase: Double = 0
     private var pendingColorShift: Double = 0
     private var flowHead: Double = 0
@@ -57,6 +58,9 @@ final class GlowAnimator {
 
     /// 0 when nothing is playing, rising to 1 as the glow fades in.
     var visibility: Float { presence }
+
+    /// 0 in loud passages, towards 1 in quiet ones; drives the breathing.
+    var quietnessLevel: Float { quietness }
 
     /// How far the frosted-glass band reaches in from the edge.
     static func frostDepth(thickness: Double) -> CGFloat {
@@ -100,6 +104,9 @@ final class GlowAnimator {
         approach(&bass, Float(features?.bass ?? 0), dt, attack: 0.03, release: 0.2)
         approach(&treble, Float(features?.treble ?? 0), dt, attack: 0.02, release: 0.15)
         approach(&intensity, features?.intensity ?? 0.5, dt, attack: 0.5, release: 0.8)
+        // How quiet the passage is, slowly: quiet songs breathe, loud ones don't.
+        let quietTarget: Float = playing ? min(1, max(0, (0.5 - level) / 0.35)) : 0
+        quietness += (quietTarget - quietness) * coefficient(dt, 2.5)
 
         kick *= exp(-dt / 0.2)
         snare *= exp(-dt / 0.09)
@@ -182,7 +189,9 @@ final class GlowAnimator {
                           Float(preferences.waveFlowDirection.phaseSign), dropFlash,
                           Float(auroraDrift))
         next.tuning = SIMD4(Float(AppPreferences.tuningMultiplier(preferences.reactivity)),
-                            Float(AppPreferences.tuningMultiplier(preferences.rayLength)), 0, 0)
+                            Float(AppPreferences.tuningMultiplier(preferences.rayLength)),
+                            quietness,
+                            Float(AppPreferences.clampedUnitValue(preferences.smoke, fallback: 0.3)))
         for (index, shock) in shocks.enumerated() {
             next.setShock(index, age: shock.age, strength: shock.strength)
         }

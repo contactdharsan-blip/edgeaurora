@@ -18,7 +18,8 @@ struct GlowUniforms {
     var color = SIMD4<Float>.zero
     /// flow length, flow direction (+1/-1), drop flash, aurora drift
     var flow = SIMD4<Float>.zero
-    /// reactivity multiplier, ray length multiplier (1 = tuned default), unused, unused
+    /// reactivity multiplier, ray length multiplier (1 = tuned default),
+    /// quietness 0...1 (drives breathing), smoke strength 0...1
     var tuning = SIMD4<Float>(1, 1, 0, 0)
     /// age (seconds), strength; strength 0 marks an empty slot
     var shocks: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
@@ -273,6 +274,20 @@ enum GlowShader {
     }
 
 
+    // One ray's life on its own clock: born, shooting out over its first
+    // third, flickering, then fading; about a fifth of its cycles are skipped
+    // so the rim never pulses in step. Returns (visibility, rise).
+    static float2 ray_life(float cell, float time) {
+        float period = 0.9 + 1.6 * hash(cell * 5.17);
+        float clock = time / period + hash(cell * 9.31);
+        float t = fract(clock);
+        float alive = step(0.2, hash(cell * 3.7 + floor(clock) * 1.31));
+        float birth = smoothstep(0.0, 0.1, t);
+        float death = 1.0 - smoothstep(0.62, 1.0, t);
+        float flicker = 0.88 + 0.12 * sin(time * (18.0 + 14.0 * hash(cell * 2.3)) + cell);
+        return float2(alive * birth * death * flicker, smoothstep(0.0, 0.3, t));
+    }
+
     static float cells(float perimeter_points, float spacing) {
         return max(1.0, round(perimeter_points / spacing));
     }
@@ -324,8 +339,11 @@ enum GlowShader {
         // The owner's Reactivity slider scales every beat swing; 1 is the
         // tuned default.
         float react = u.tuning.x;
-        float reach = base * (0.4 + 0.6 * band) * (1.0 + 0.22 * kick * react)
-                    + base * 0.3 * shock * react;
+        // Quiet passages breathe: a slow swell, about one every six seconds,
+        // that fades out as the music gets louder.
+        float breath = sin(time * 6.2831853 * 0.17) * u.tuning.z;
+        float reach = (base * (0.4 + 0.6 * band) * (1.0 + 0.22 * kick * react)
+                       + base * 0.3 * shock * react) * (1.0 + 0.1 * breath);
         float end_line = clamp(reach * (0.55 + 0.65 * swell), 3.0, strip_depth * 0.68);
         float start_line = 1.0 + 3.5 * loop_noise(c * n2 - drift * 0.6, n2);
         end_line = max(end_line, start_line + 2.0);
@@ -342,11 +360,24 @@ enum GlowShader {
         // spill over the curtain's lower edge.
         float n4 = cells(perimeter_points, 10.0);
         float n5 = cells(perimeter_points, 4.5);
-        float ray_field = loop_noise(c * n4 + drift * 2.0, n4);
+        float ray_x = c * n4 + drift * 2.0;
+        float ray_field = loop_noise(ray_x, n4);
         float hair = 0.88 + 0.12 * loop_noise(c * n5 - drift * 3.4, n5);
-        float rays = (0.72 + 0.28 * ray_field) * hair;
-        float ray = smoothstep(0.5, 0.95, ray_field) * hair;
-        float ray_soft = smoothstep(0.3, 0.95, ray_field);
+
+        // Living rays: each ray cell runs its own life, blended across the
+        // cell boundary so rays never pop.
+        float cell_a = wrap_cell(floor(ray_x), n4);
+        float cell_b = wrap_cell(floor(ray_x) + 1.0, n4);
+        float blend_x = smoothstep(0.0, 1.0, fract(ray_x));
+        float2 ray_state = mix(ray_life(cell_a, time), ray_life(cell_b, time), blend_x);
+        // Onsets spark rays where their frequencies live: kicks along the
+        // bottom, snares and hats across the top, scaled by Reactivity.
+        float chosen = mix(step(0.5, hash(cell_a * 7.13)), step(0.5, hash(cell_b * 7.13)), blend_x);
+        float spark = clamp((kick * (1.0 - s) + snare * s) * react, 0.0, 1.0) * chosen;
+
+        float rays = (0.72 + 0.28 * ray_field * (0.6 + 0.4 * ray_state.x)) * hair;
+        float ray = smoothstep(0.5, 0.95, ray_field) * hair * max(ray_state.x, spark);
+        float ray_soft = smoothstep(0.3, 0.95, ray_field) * max(ray_state.x, spark);
 
         float end_offset = (d - end_line) / 3.6;
         float start_offset = (d - start_line) / 4.0;
@@ -362,7 +393,8 @@ enum GlowShader {
         float drive = pow(band, 0.8) * (0.45 + 0.75 * level);
         drive = clamp(0.5 + (drive - 0.5) * react, 0.0, 1.6);
         float ray_length = min((4.0 + 80.0 * ray) * u.tuning.y * (0.08 + 1.1 * drive)
-                               * (1.0 + 0.4 * kick * react), room);
+                               * (1.0 + 0.4 * kick * react)
+                               * mix(0.35, 1.0, max(ray_state.y, spark)) * (1.0 + 0.5 * spark), room);
         float streak = past > 0.0 && ray_length > 0.0
             ? ray * pow(clamp(1.0 - past / ray_length, 0.0, 1.0), 1.6)
             : 0.0;
@@ -393,9 +425,9 @@ enum GlowShader {
         // The body keeps its colour in quiet passages; the lines, rays and
         // their halos carry the (deliberately gentle) swings.
         float body_energy = (0.85 + 0.15 * band) * (1.0 + 0.1 * kick * react + 0.1 * u.flow.z);
-        float brightness = fill * body_energy
-                         + (0.3 * end_glow + 0.6 * start_glow + 0.35 * streak + halos) * energy
-                         + 0.15 * shock * react * end_glow;
+        float brightness = (fill * body_energy
+                            + (0.3 * end_glow + 0.6 * start_glow + 0.35 * streak + halos) * energy
+                            + 0.15 * shock * react * end_glow) * (1.0 + 0.22 * breath);
 
         float mask = 1.0;
         if (u.color.z > 0.5) {
@@ -453,6 +485,15 @@ enum GlowShader {
         float3 glint_color = mix(color, float3(1.0), 0.4);
         float3 rgb = color * alpha * (1.0 - glints) + glint_color * glints;
         alpha = alpha + glints * (1.0 - alpha);
+
+        // Smoked glass: a deep, album-tinted shade under the band, strongest
+        // at the edge and fading inward, so the glow still reads over a white
+        // window. The Smoke slider sets its strength; 0 turns it off.
+        float smoke = u.tuning.w * presence * strip_fade * mask
+                    * (1.0 - smoothstep(start_line, end_line * 1.4 + 6.0, d));
+        float3 smoke_rgb = lch_to_p3(float3(0.22, lch.y * 0.7, lch.z));
+        rgb = rgb + smoke_rgb * smoke * (1.0 - alpha);
+        alpha = alpha + smoke * (1.0 - alpha);
 
         // Interleaved-gradient-noise dither, one 8-bit step wide, so the long
         // fades do not band. Fully clear pixels stay exactly clear.
