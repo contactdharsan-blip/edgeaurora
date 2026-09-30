@@ -48,6 +48,14 @@ final class GlowAnimator {
         renderState.isPlaying || presence > 0.002
     }
 
+    /// 0 when nothing is playing, rising to 1 as the glow fades in.
+    var visibility: Float { presence }
+
+    /// How far the frosted-glass band reaches in from the edge.
+    static func frostDepth(thickness: Double) -> CGFloat {
+        ceil(baseReach(thickness: thickness) * 1.7)
+    }
+
     /// Points the glow reaches inward from the edge at full band energy.
     static func baseReach(thickness: Double) -> CGFloat {
         CGFloat(14 + 56 * AppPreferences.clampedUnitValue(thickness, fallback: 0.45))
@@ -77,7 +85,8 @@ final class GlowAnimator {
         let targets = features?.bands ?? []
         for index in bands.indices {
             let target = index < targets.count ? min(1, max(0, targets[index])) : 0
-            let tau: Float = target > bands[index] ? 0.03 : 0.2
+            // Slow on both sides: the owner wanted a calmer, less twitchy glow.
+            let tau: Float = target > bands[index] ? 0.12 : 0.5
             bands[index] += (target - bands[index]) * coefficient(dt, tau)
         }
         approach(&level, Float(features?.level ?? 0), dt, attack: 0.04, release: 0.25)
@@ -85,7 +94,7 @@ final class GlowAnimator {
         approach(&treble, Float(features?.treble ?? 0), dt, attack: 0.02, release: 0.15)
         approach(&intensity, features?.intensity ?? 0.5, dt, attack: 0.5, release: 0.8)
 
-        kick *= exp(-dt / 0.14)
+        kick *= exp(-dt / 0.2)
         snare *= exp(-dt / 0.09)
         dropFlash *= exp(-dt / 0.5)
         shocks = shocks.compactMap { shock in
@@ -113,16 +122,16 @@ final class GlowAnimator {
             lastDropSerial = nil
         }
 
-        // Colors drift slowly in quiet passages and faster as the song builds;
-        // a drop rotates the palette one full step over about half a second.
-        colorPhase += Double(dt) * (0.006 + 0.045 * Double(intensity * intensity))
-        let shift = pendingColorShift * Double(coefficient(dt, 0.25))
+        // Colors drift slowly in quiet passages and a little faster as the song
+        // builds; a drop rotates the palette one step over a few seconds.
+        colorPhase += Double(dt) * (0.004 + 0.015 * Double(intensity * intensity))
+        let shift = pendingColorShift * Double(coefficient(dt, 1.2))
         colorPhase += shift
         pendingColorShift -= shift
         colorPhase = colorPhase.truncatingRemainder(dividingBy: 1)
 
         // The aurora's end line drifts along the rim; the music sets its pace.
-        auroraDrift += Double(dt) * Double(0.25 + 0.9 * level + 0.6 * kick + 0.35 * intensity)
+        auroraDrift += Double(dt) * Double(0.3 + 0.35 * level + 0.1 * kick + 0.15 * intensity)
         auroraDrift = auroraDrift.truncatingRemainder(dividingBy: 10_000)
 
         if preferences.waveFlowEnabled {

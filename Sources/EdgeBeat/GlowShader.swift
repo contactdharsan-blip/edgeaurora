@@ -176,19 +176,18 @@ enum GlowShader {
         float x = fract(t) * float(count);
         int i = int(floor(x)) % count;
         int j = (i + 1) % count;
-        float f = smoothstep(0.0, 1.0, x - floor(x));
-        return mix(u.colors[i].rgb, u.colors[j].rgb, f);
+        return mix(u.colors[i].rgb, u.colors[j].rgb, x - floor(x));
     }
 
-    // Deep, saturated version of a colour: the hue is kept, saturation is
-    // pushed to nearly full and value held below white, so album colours read
-    // as jewel tones rather than pastels. Near-greys stay grey.
+    // Luminous version of a colour: the hue is kept at full value and strong
+    // saturation, lifted toward white so it glows rather than sits dark.
+    // Near-greys stay grey.
     static float3 vivid(float3 c) {
         float high = max(c.r, max(c.g, c.b));
         float low = min(c.r, min(c.g, c.b));
-        if (high - low < 0.05) { return c * 0.8; }
+        if (high - low < 0.05) { return float3(min(1.0, high * 1.25)); }
         float3 shape = (c - low) / (high - low);
-        return mix(float3(1.0), shape, 0.93) * 0.8;
+        return mix(float3(1.0), shape, 0.72);
     }
 
     static float hash(float n) {
@@ -211,15 +210,24 @@ enum GlowShader {
         return max(-k * log(sum), 0.0);
     }
 
+    // Integer cell modulo the period. Fast-math division can return
+    // 0.99999994 for 21.0 / 21.0, which floors to the wrong cell exactly at
+    // the wrap and put a visible seam at bottom centre; the half-cell offset
+    // keeps the quotient away from every integer.
+    static float wrap_cell(float cell, float period) {
+        return cell - period * floor((cell + 0.5) / period);
+    }
+
     // Smooth value noise that repeats every `period` cells, so a pattern laid
     // around the whole perimeter meets itself without a seam.
     static float loop_noise(float x, float period) {
         float i = floor(x);
         float f = x - i;
-        float a = hash(i - period * floor(i / period));
-        float b = hash((i + 1.0) - period * floor((i + 1.0) / period));
+        float a = hash(wrap_cell(i, period));
+        float b = hash(wrap_cell(i + 1.0, period));
         return mix(a, b, f * f * (3.0 - 2.0 * f));
     }
+
 
     static float cells(float perimeter_points, float spacing) {
         return max(1.0, round(perimeter_points / spacing));
@@ -269,13 +277,14 @@ enum GlowShader {
         float swell = 0.55 * loop_noise(c * n1 - drift * 0.9, n1)
                     + 0.30 * loop_noise(c * n2 + drift * 1.5, n2)
                     + 0.15 * loop_noise(c * n3 - drift * 2.6, n3);
-        float reach = base * (0.2 + 0.8 * band) * (1.0 + 0.55 * kick) + base * 0.7 * shock;
+        float reach = base * (0.4 + 0.6 * band) * (1.0 + 0.22 * kick) + base * 0.3 * shock;
         float end_line = clamp(reach * (0.55 + 0.65 * swell), 3.0, strip_depth * 0.68);
         float start_line = 1.0 + 3.5 * loop_noise(c * n2 - drift * 0.6, n2);
         end_line = max(end_line, start_line + 2.0);
 
         float d = halo_distance(p, u, 14.0);
-        float aa = max(fwidth(d), 0.35);
+        // A little softer than a pixel: the lines read as light, not ink.
+        float aa = max(fwidth(d), 2.5);
         float inside = smoothstep(start_line - aa, start_line + aa, d)
                      * smoothstep(end_line + aa, end_line - aa, d);
         float depth = clamp((d - start_line) / (end_line - start_line), 0.0, 1.0);
@@ -286,31 +295,45 @@ enum GlowShader {
         float n4 = cells(perimeter_points, 10.0);
         float n5 = cells(perimeter_points, 4.5);
         float ray_field = loop_noise(c * n4 + drift * 2.0, n4);
-        float hair = 0.65 + 0.35 * loop_noise(c * n5 - drift * 3.4, n5);
+        float hair = 0.88 + 0.12 * loop_noise(c * n5 - drift * 3.4, n5);
         float rays = (0.72 + 0.28 * ray_field) * hair;
         float ray = smoothstep(0.5, 0.95, ray_field) * hair;
+        float ray_soft = smoothstep(0.3, 0.95, ray_field);
 
-        float end_offset = (d - end_line) / 1.4;
-        float start_offset = (d - start_line) / 1.0;
+        float end_offset = (d - end_line) / 3.6;
+        float start_offset = (d - start_line) / 4.0;
         float end_glow = exp(-end_offset * end_offset);
         float start_glow = exp(-start_offset * start_offset);
         float past = d - end_line;
-        float ray_length = min((10.0 + 42.0 * ray) * (0.6 + 0.6 * band) * (1.0 + 0.7 * kick),
-                               max(strip_depth - end_line - 4.0, 0.0));
+        float room = max(strip_depth - end_line - 4.0, 0.0);
+        float ray_length = min((10.0 + 42.0 * ray) * (0.75 + 0.35 * band) * (1.0 + 0.25 * kick), room);
         float streak = past > 0.0 && ray_length > 0.0
             ? ray * pow(clamp(1.0 - past / ray_length, 0.0, 1.0), 1.6)
             : 0.0;
-        float spill = past > 0.0 ? 0.18 * exp(-past / 4.0) : 0.0;
-        float fill = inside * (0.8 + 0.2 * depth) * rays;
+        float fill = inside * (0.93 + 0.07 * depth) * rays;
 
-        float energy = (0.55 + 0.45 * band) * (1.0 + 0.5 * kick + 0.35 * snare + 0.3 * u.flow.z)
-                     * (0.85 + 0.15 * level);
-        // The body keeps most of its colour in quiet passages; the lines and
-        // rays carry the swings.
-        float body_energy = (0.8 + 0.2 * band) * (1.0 + 0.25 * kick + 0.2 * u.flow.z);
+        // Neon halos: every crisp line and ray carries a soft glow around its
+        // sharp core, wider than the core and fainter.
+        float end_halo_offset = (d - end_line) / 18.0;
+        float start_halo_offset = (d - start_line) / 16.0;
+        float end_halo = exp(-end_halo_offset * end_halo_offset);
+        float start_halo = exp(-start_halo_offset * start_halo_offset);
+        float ray_halo_length = min(ray_length * 1.6 + 12.0, room);
+        float ray_halo = past > 0.0 && ray_halo_length > 0.0
+            ? ray_soft * pow(clamp(1.0 - past / ray_halo_length, 0.0, 1.0), 2.0)
+            : 0.0;
+        // Bloom: the whole ribbon breathes light a little way past its end line.
+        float bloom = past > 0.0 ? exp(-past / 16.0) : 0.0;
+        float halos = 0.9 * end_halo + 0.85 * start_halo + 0.8 * ray_halo + 0.3 * bloom;
+
+        float energy = (0.7 + 0.3 * band) * (1.0 + 0.2 * kick + 0.1 * snare + 0.15 * u.flow.z)
+                     * (0.9 + 0.1 * level);
+        // The body keeps its colour in quiet passages; the lines, rays and
+        // their halos carry the (deliberately gentle) swings.
+        float body_energy = (0.85 + 0.15 * band) * (1.0 + 0.1 * kick + 0.1 * u.flow.z);
         float brightness = fill * body_energy
-                         + (0.9 * end_glow + 0.6 * start_glow + 0.8 * streak + spill) * energy
-                         + 0.4 * shock * end_glow;
+                         + (0.9 * end_glow + 0.6 * start_glow + 0.8 * streak + halos) * energy
+                         + 0.15 * shock * end_glow;
 
         float mask = 1.0;
         if (u.color.z > 0.5) {
@@ -325,14 +348,17 @@ enum GlowShader {
 
         // Colour runs across the ribbon from one palette entry at the edge to
         // the next at the end line, the way an aurora shifts hue with height.
-        float hue = s * 0.85 + u.color.x;
-        float3 color = mix(vivid(palette(u, hue)), vivid(palette(u, hue + 0.3)),
-                           smoothstep(0.0, 1.0, depth));
+        // Only about a third of the palette spans the rim at once, so colours
+        // change in long, gradual sweeps rather than bands.
+        float hue = s * 0.32 + u.color.x;
+        float3 color = mix(vivid(palette(u, hue)), vivid(palette(u, hue + 0.08)), depth);
         // The ribbon's body sits a little deeper than its lines; rays past the
         // end line keep the end line's colour.
-        color *= mix(0.9, 1.0, max(max(end_glow, start_glow), streak));
+        // Neon: white-hot cores on every line and ray inside their coloured
+        // glow, and the whole ribbon lifted toward white.
+        float core = max(max(end_glow, start_glow * 0.85), streak * 0.8);
         color = mix(color, float3(1.0),
-                    clamp(end_glow * (0.05 + 0.25 * kick + 0.15 * u.flow.z), 0.0, 1.0));
+                    clamp(0.14 + core * (0.55 + 0.1 * kick + 0.08 * u.flow.z), 0.0, 1.0));
 
         // Treble shimmer: soft, tinted glints on the start line where the highs
         // are, each cell on its own random phase so they never flicker in step.

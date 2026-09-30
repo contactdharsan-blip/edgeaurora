@@ -164,8 +164,12 @@ final class GlowSnapshotTests: XCTestCase {
         let loudImage = try render(loud)
         let quietImage = try render(quiet)
         try save(quietImage, name: "04-quiet")
-        let probe = (20, 475)
-        XCTAssertGreaterThan(alpha(loudImage, probe.0, probe.1), 1.5 * alpha(quietImage, probe.0, probe.1))
+        // The body keeps its colour in quiet passages by design; what a quiet
+        // passage changes is how far the ribbon reaches, so compare lit area.
+        func litArea(_ image: [UInt8]) -> Int {
+            stride(from: 3, to: image.count, by: 4).filter { image[$0] > 25 }.count
+        }
+        XCTAssertGreaterThan(Double(litArea(loudImage)), 1.2 * Double(litArea(quietImage)))
     }
 
     func testShockwaveClimbsTheSides() throws {

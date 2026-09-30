@@ -28,11 +28,18 @@ final class OverlayPanel: NSPanel {
         isMovableByWindowBackground = false
         hidesOnDeactivate = false
 
-        let view = GlowView(frame: NSRect(origin: .zero, size: screen.frame.size),
-                            animator: animator, preferences: preferences,
+        let bounds = NSRect(origin: .zero, size: screen.frame.size)
+        let container = NSView(frame: bounds)
+        container.autoresizingMask = [.width, .height]
+        let backdrop = FrostedBorderView(frame: bounds)
+        backdrop.autoresizingMask = [.width, .height]
+        container.addSubview(backdrop)
+        let view = GlowView(frame: bounds, animator: animator, preferences: preferences,
                             renderState: renderState, notch: displayNotch)
         view.autoresizingMask = [.width, .height]
-        contentView = view
+        container.addSubview(view)
+        view.backdrop = backdrop
+        contentView = container
         glowView = view
     }
 

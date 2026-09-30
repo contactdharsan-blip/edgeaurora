@@ -99,6 +99,11 @@ final class GlowView: NSView {
         didSet { if notch != oldValue { layoutStrips() } }
     }
 
+    /// The frosted band behind this view; it follows the glow's fade.
+    weak var backdrop: FrostedBorderView? {
+        didSet { layoutStrips() }
+    }
+
     private let animator: GlowAnimator
     private let preferences: AppPreferences
     private let renderState: RenderState
@@ -213,6 +218,8 @@ final class GlowView: NSView {
         let depth = GlowAnimator.stripDepth(thickness: preferences.thickness)
         let frames = Self.stripFrames(size: size, depth: depth, notchDepth: notch?.depth ?? 0)
         let scale = Self.resolutionScale(backing: window?.backingScaleFactor ?? 2)
+        backdrop?.configure(depth: GlowAnimator.frostDepth(thickness: preferences.thickness),
+                            cornerRadius: GlowAnimator.cornerRadius(for: size))
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for (strip, rect) in zip(strips, frames) {
@@ -237,6 +244,7 @@ final class GlowView: NSView {
 
     @objc private func step(_ link: CADisplayLink) {
         animator.advance(to: link.timestamp)
+        backdrop?.update(visibility: animator.visibility)
         let active = animator.isActive
         if !active && renderedIdleFrame {
             link.isPaused = true
@@ -263,5 +271,90 @@ final class GlowView: NSView {
             RenderStats.shared.recordFrame(gpuTime: buffer.gpuEndTime - buffer.gpuStartTime)
         }
         commandBuffer.commit()
+    }
+}
+
+/// Frosted glass behind the aurora: the system's own behind-window blur, masked
+/// so it is strongest at the screen edge and fades out toward the middle. It
+/// fades with the glow and is hidden outright when nothing plays, so it costs
+/// nothing while idle.
+final class FrostedBorderView: NSVisualEffectView {
+    private var maskKey: SIMD2<Double>?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        material = .hudWindow
+        blendingMode = .behindWindow
+        state = .active
+        appearance = NSAppearance(named: .darkAqua)
+        alphaValue = 0
+        isHidden = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func configure(depth: CGFloat, cornerRadius: CGFloat) {
+        let key = SIMD2(Double(depth), Double(cornerRadius))
+        guard maskKey != key else { return }
+        maskKey = key
+        maskImage = Self.borderMask(depth: depth, cornerRadius: cornerRadius)
+    }
+
+    /// Alpha follows the glow in 5% steps, so a steady glow never touches the
+    /// window server.
+    func update(visibility: Float) {
+        let target = CGFloat((visibility * 20).rounded() / 20)
+        guard target > 0 else {
+            if !isHidden { isHidden = true }
+            return
+        }
+        if isHidden { isHidden = false }
+        if alphaValue != target { alphaValue = target }
+    }
+
+    /// A nine-part mask: opaque at the rounded screen edge, easing to clear at
+    /// `depth`, with a stretchable clear centre.
+    static func borderMask(depth: CGFloat, cornerRadius: CGFloat) -> NSImage {
+        let scale: CGFloat = 2
+        let side = depth * 2 + 2
+        let pixels = Int((side * scale).rounded())
+        var bytes = [UInt8](repeating: 0, count: pixels * pixels * 4)
+        let half = side / 2
+        for y in 0..<pixels {
+            for x in 0..<pixels {
+                let px = (CGFloat(x) + 0.5) / scale - half
+                let py = (CGFloat(y) + 0.5) / scale - half
+                let qx = abs(px) - half + cornerRadius
+                let qy = abs(py) - half + cornerRadius
+                let outside = hypot(max(qx, 0), max(qy, 0))
+                let inside = min(max(qx, qy), 0)
+                let distance = -(outside + inside - cornerRadius)
+                let t = min(1, max(0, (distance - depth * 0.15) / (depth * 0.85)))
+                let alpha = UInt8((1 - t * t * (3 - 2 * t)) * 255)
+                let index = (y * pixels + x) * 4
+                bytes[index] = alpha
+                bytes[index + 1] = alpha
+                bytes[index + 2] = alpha
+                bytes[index + 3] = alpha
+            }
+        }
+        let image: NSImage
+        if let provider = CGDataProvider(data: Data(bytes) as CFData),
+           let cgImage = CGImage(width: pixels, height: pixels, bitsPerComponent: 8,
+                                 bitsPerPixel: 32, bytesPerRow: pixels * 4,
+                                 space: CGColorSpaceCreateDeviceRGB(),
+                                 bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                                 provider: provider, decode: nil, shouldInterpolate: true,
+                                 intent: .defaultIntent) {
+            image = NSImage(cgImage: cgImage, size: NSSize(width: side, height: side))
+        } else {
+            image = NSImage(size: NSSize(width: side, height: side))
+        }
+        image.capInsets = NSEdgeInsets(top: depth, left: depth, bottom: depth, right: depth)
+        image.resizingMode = .stretch
+        return image
     }
 }
