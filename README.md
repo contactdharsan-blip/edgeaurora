@@ -48,13 +48,26 @@ menu also shows live CPU, watts and frame rate while it is open.
   which opens a hidden "Where is Spotify?" chooser and hangs track detection.
 - The Now Playing window kept its SwiftUI view ticking while hidden.
 
+## Installation
+
+Download `EdgeBeat.zip` from the
+[latest release](https://github.com/contactdharsan-blip/edgeaurora/releases/latest),
+unzip it and move `EdgeBeat.app` to `/Applications`. The download is built for
+Apple silicon and needs macOS 14.4 or later.
+
+The release is not notarized, so macOS blocks the first launch and says it
+cannot verify the app. Click Done, open System Settings › Privacy & Security,
+scroll to the message about EdgeBeat and click Open Anyway. Then allow system
+audio recording (Privacy & Security › Screen & System Audio Recording) and, if
+asked, control of Music or Spotify.
+
 ## Requirements
 
 - macOS 14.4 or later, Apple silicon recommended
 - Apple Music or Spotify
-- Xcode Command Line Tools to build
+- Xcode Command Line Tools to build from source
 
-## Build and run
+## Build from source
 
 ```sh
 git clone https://github.com/contactdharsan-blip/edgeaurora.git
@@ -74,8 +87,6 @@ EDGEBEAT_SIGN_ID="Apple Development: you@example.com (TEAMID)" bash scripts/buil
 To install, copy `EdgeBeat.app` to `/Applications`. On first launch allow system
 audio recording (Privacy & Security › Screen & System Audio Recording) and, if
 asked, control of Music or Spotify.
-
-There are no prebuilt releases yet; build from source.
 
 ## Development
 
